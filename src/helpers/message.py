@@ -56,7 +56,7 @@ class RDTPacket:
     
     def to_bytes(self) -> bytes:
         """Serializa: header + payload + checksum (hash del payload)"""
-        payload_hash = self._calculate_payload_hash()
+        payload_hash = self._calculate_payload_hash(self.payload)
         return self.header.to_bytes() + self.payload + payload_hash
     
     @classmethod
@@ -70,8 +70,9 @@ class RDTPacket:
         payload = data[RDTHeader.SIZE:payload_end]
         
         # Verificar checksum (últimos 32 bytes son el hash MD5)
-        expected_hash = data[payload_end:payload_end + 32]
+        expected_hash = data[-32:]  # Los últimos 32 bytes del paquete completo
         actual_hash = cls._calculate_payload_hash(payload)
+        
         
         packet = cls(header, payload)
         packet._stored_hash = expected_hash  # Guardar para verificación

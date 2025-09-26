@@ -131,7 +131,7 @@ def main():
                 download_file(client_socket, addr, filename)
         
         # Close connection
-        fin_packet = create_end_packet(seq_num=100)  # Use high seq number for FIN
+        fin_packet = create_end_packet(ack_num=0, seq_num=100)  # Use high seq number for FIN
         client_socket.sendto(fin_packet.to_bytes(), addr)
         print("Sent FIN packet")
     

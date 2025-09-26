@@ -45,8 +45,8 @@ class RDTProtocol:
         print(f"SYN received from {address}")
         
         # Send SYN-ACK
-        syn_ack = create_end_packet(0)
-        syn_ack.set_flag(RDTFlags.ACK)
+        syn_ack = create_sync_packet(0)  # Create with SYN flag
+        syn_ack.set_flag(RDTFlags.ACK)   # Add ACK flag
         server_socket.sendto(syn_ack.to_bytes(), address)
         
         client_state['connected'] = True
