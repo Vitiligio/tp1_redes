@@ -2,6 +2,7 @@ import random
 import socket
 import os
 from helpers.message import *
+from server_config import SERVER_IP, SERVER_PORT, STORAGE_DIR
 
 class RDTProtocol:
     def __init__(self, storage_dir="server_files"):
@@ -134,12 +135,12 @@ class RDTProtocol:
 
 def main():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind(('', 12000))
+    server_socket.bind((SERVER_IP, SERVER_PORT))
     
-    rdt_protocol = RDTProtocol(storage_dir="server_files")
+    rdt_protocol = RDTProtocol(storage_dir=STORAGE_DIR)
     
-    print("RDT Server is running on port 12000")
-    print("Files will be stored in: server_files/")
+    print(f"RDT Server is running on {SERVER_IP}:{SERVER_PORT}")
+    print(f"Files will be stored in: {STORAGE_DIR}/")
     
     while True:
         try:

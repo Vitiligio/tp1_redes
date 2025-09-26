@@ -2,16 +2,13 @@ import time
 import socket
 import os
 from helpers.message import *
-
-CLIENT_SOCKET_TIMEOUT = 5
-SERVER_IP = "127.0.0.1"
-SERVER_PORT = 12000
+from client_config import SERVER_IP, SERVER_PORT, SOCKET_TIMEOUT, PACKET_SIZE
 
 def connect_server(addr):
     """Establish connection with server using SYN handshake"""
     connection_made = False
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client_socket.settimeout(CLIENT_SOCKET_TIMEOUT)
+    client_socket.settimeout(SOCKET_TIMEOUT)
 
     # Send SYN packet
     sync_message = create_sync_packet(0)
@@ -74,7 +71,7 @@ def upload_file(client_socket, addr, filename: str):
     try:
         with open(filename, 'rb') as file:
             while True:
-                chunk = file.read(1024)  # Read 1KB chunks
+                chunk = file.read(PACKET_SIZE)  # Read packets of configured size
                 if not chunk:
                     break
                 
