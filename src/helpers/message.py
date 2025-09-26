@@ -73,7 +73,6 @@ class RDTPacket:
         expected_hash = data[-32:]  # Los últimos 32 bytes del paquete completo
         actual_hash = cls._calculate_payload_hash(payload)
         
-        
         packet = cls(header, payload)
         packet._stored_hash = expected_hash  # Guardar para verificación
         
