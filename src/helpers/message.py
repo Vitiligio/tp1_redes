@@ -119,17 +119,21 @@ def create_end_packet(ack_num: int, seq_num: int = 0) -> RDTPacket:
     header = RDTHeader(sequence_number=seq_num, ack_number=ack_num, flags=RDTFlags.FIN)
     return RDTPacket(header)
 
-def create_operation_packet(seq_num: int, operation: str, filename: str) -> RDTPacket:
-    """Create packet for operation specification (UPLOAD/DOWNLOAD + filename)"""
-    operation_data = f"{operation}:{filename}".encode('utf-8')
+def create_operation_packet(seq_num: int, operation: str, filename: str, protocol: str = "stop_and_wait") -> RDTPacket:
+    """Create packet for operation specification (UPLOAD/DOWNLOAD + filename + protocol)"""
+    operation_data = f"{operation}:{filename}:{protocol}".encode('utf-8')
     header = RDTHeader(sequence_number=seq_num, flags=RDTFlags.DATA)
     return RDTPacket(header, operation_data)
 
 def parse_operation_packet(packet: RDTPacket) -> tuple:
-    """Parse operation packet into (operation, filename)"""
+    """Parse operation packet into (operation, filename, protocol)"""
     if packet.payload:
         data_str = packet.payload.decode('utf-8')
         if ':' in data_str:
-            operation, filename = data_str.split(':', 1)
-            return operation.upper(), filename
-    return None, None
+            parts = data_str.split(':', 2)
+            if len(parts) >= 2:
+                operation = parts[0].upper()
+                filename = parts[1]
+                protocol = parts[2] if len(parts) > 2 else "stop_and_wait"
+                return operation, filename, protocol
+    return None, None, None

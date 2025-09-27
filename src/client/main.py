@@ -32,11 +32,11 @@ def connect_server(addr):
 
     return connection_made, client_socket
 
-def send_operation_request(client_socket, addr, operation: str, filename: str):
-    """Send operation specification (UPLOAD/DOWNLOAD + filename) with seq=1"""
-    operation_packet = create_operation_packet(seq_num=1, operation=operation, filename=filename)
+def send_operation_request(client_socket, addr, operation: str, filename: str, protocol: str = "stop_and_wait"):
+    """Send operation specification (UPLOAD/DOWNLOAD + filename + protocol) with seq=1"""
+    operation_packet = create_operation_packet(seq_num=1, operation=operation, filename=filename, protocol=protocol)
     
-    print(f"Sending operation request: {operation}:{filename}")
+    print(f"Sending operation request: {operation}:{filename} using {protocol}")
     client_socket.sendto(operation_packet.to_bytes(), addr)
     
     # Wait for ACK
@@ -121,7 +121,7 @@ def main():
     
     if connection_made:
         # Send operation specification
-        if send_operation_request(client_socket, addr, operation, filename):
+        if send_operation_request(client_socket, addr, operation, filename, "stop_and_wait"):
             if operation.upper() == "UPLOAD":
                 upload_file(client_socket, addr, filename)
             elif operation.upper() == "DOWNLOAD":

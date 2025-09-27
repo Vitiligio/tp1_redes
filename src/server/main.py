@@ -70,11 +70,12 @@ class RDTProtocol:
         if seq_num == expected_seq:
             if seq_num == 1:
                 # This is the operation specification packet
-                operation, filename = parse_operation_packet(packet)
+                operation, filename, protocol = parse_operation_packet(packet)
                 if operation and filename:
                     client_state['current_operation'] = operation
                     client_state['current_filename'] = filename
-                    print(f"Operation received: {operation} for file: {filename}")
+                    client_state['protocol'] = protocol
+                    print(f"Operation received: {operation} for file: {filename} using {protocol}")
                     
                     # Prepare for file transfer
                     if operation == "UPLOAD":
