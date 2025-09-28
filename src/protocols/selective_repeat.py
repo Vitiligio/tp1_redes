@@ -22,8 +22,8 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
             return False
         
         seq_num = self.current_seq
-        packet.seq_num = seq_num
-        packet.ack_num = 0
+        packet.header.sequence_number = seq_num
+        packet.header.ack_number = 0
         
         try:
             self.socket.sendto(packet.to_bytes(), address)
@@ -81,7 +81,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
     
     def handle_duplicate(self, packet: RDTPacket) -> bool:
         if packet.has_flag(RDTFlags.ACK):
-            ack_num = packet.ack_num
+            ack_num = packet.header.ack_number
             if ack_num in self.ack_received and self.ack_received[ack_num]:
                 return True
         return False
@@ -89,21 +89,20 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
     def send_file(self, file_path: str, address: tuple) -> bool:
         try:
             with open(file_path, 'rb') as file:
-                while True:
-                    chunk = file.read(1024)
-                    if not chunk:
-                        break
-                    
-                    packet = create_data_packet(0, 0, chunk)
-                    
-                    while not self.send_packet(packet, address):
+                eof_reached = False
+                while not eof_reached or len(self.send_window) > 0:
+                    while not eof_reached and len(self.send_window) < self.window_size:
+                        chunk = file.read(1024)
+                        if not chunk:
+                            eof_reached = True
+                            break
+                        packet = create_data_packet(0, chunk)
+                        if not self.send_packet(packet, address):
+                            break
+                    pkt = self.receive_packet()
+                    if pkt is None:
                         self._check_timeouts()
-                        time.sleep(0.01)
-                    
-                    while len(self.send_window) > 0:
-                        self._check_timeouts()
-                        time.sleep(0.01)
-                
+                        time.sleep(0.005)
                 return True
         except Exception as e:
             print(f"Error sending file: {e}")
@@ -122,7 +121,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                             file.write(packet.payload)
                             self._slide_receive_window()
                         else:
-                            self.receive_window[packet.seq_num] = packet
+                            self.receive_window[packet.header.sequence_number] = packet
                     
                     elif packet.has_flag(RDTFlags.FIN):
                         break
@@ -150,7 +149,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
             self.expected_seq = (self.expected_seq + 1) % 65536
     
     def _handle_ack(self, packet: RDTPacket):
-        ack_num = packet.ack_num
+        ack_num = packet.header.ack_number
         if ack_num in self.ack_received:
             if self.ack_received[ack_num]:  # Duplicate ACK!
                 self.duplicate_ack_count[ack_num] = self.duplicate_ack_count.get(ack_num, 0) + 1
@@ -162,7 +161,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                 self.slide_send_window()
     
     def _handle_data_packet(self, packet: RDTPacket, address: (str, int)) -> RDTPacket:
-        ack_packet = create_ack_packet(packet.seq_num, 0)
+        ack_packet = create_ack_packet(packet.header.sequence_number, 0)
         try:
             self.socket.sendto(ack_packet.to_bytes(), address)
         except Exception as e:
@@ -171,7 +170,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
         return packet
     
     def _can_deliver_packet(self, packet: RDTPacket) -> bool:
-        return packet.seq_num == self.expected_seq
+        return packet.header.sequence_number == self.expected_seq
     
     def _fast_retransmit(self, seq_num: int):
         if seq_num in self.send_window:
