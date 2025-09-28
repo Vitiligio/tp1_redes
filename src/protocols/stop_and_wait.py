@@ -1,5 +1,7 @@
 import socket
-from helpers.message import RDTPacket, RDTFlags, create_ack_packet
+import time
+import os
+from helpers.message import RDTPacket, RDTFlags, create_ack_packet, create_data_packet
 from .base_protocol import BaseRDTProtocol
 
 class StopAndWaitProtocol(BaseRDTProtocol):
@@ -9,21 +11,157 @@ class StopAndWaitProtocol(BaseRDTProtocol):
         self.max_retries = max_retries
         self.current_seq = 0
         self.expected_seq = 0
-    
-    def send_packet(self, packet: RDTPacket, address):
-        pass
-    
-    def receive_packet(self, expected_seq: int):
-        pass
+        self.last_sent_packet = None
+        self.last_sent_address = None
+        self.retries = 0
+
+    def send_packet(self, packet: RDTPacket, address: (str, int)) -> bool:
+        packet.header.sequence_number = self.current_seq
+        packet.header.ack_number = 0
+        
+        try:
+            self.socket.sendto(packet.to_bytes(), address)
+            self.last_sent_packet = packet
+            self.last_sent_address = address
+            return True
+        except Exception as e:
+            print(f"Error sending packet: {e}")
+            return False
+
+    def receive_packet(self, expected_seq: int = None) -> RDTPacket:
+        try:
+            data, address = self.socket.recvfrom(1024)
+            packet = RDTPacket.from_bytes(data)
+
+            if not packet.verify_integrity():
+                print(f"Packet from {address} failed integrity check")
+                return None
+            
+            if packet.has_flag(RDTFlags.ACK):
+                if packet.header.ack_number == self.current_seq:
+                    self.current_seq = (self.current_seq + 1) % 65536
+                    self.retries = 0
+                    self.last_sent_packet = None
+                    self.last_sent_address = None
+                return packet
+            elif packet.has_flag(RDTFlags.DATA):
+                if packet.header.sequence_number == self.expected_seq:
+                    ack_packet = create_ack_packet(packet.header.sequence_number, 0)
+                    self.socket.sendto(ack_packet.to_bytes(), address)
+                    self.expected_seq = (self.expected_seq + 1) % 65536
+                else:
+                    ack_packet = create_ack_packet(self.expected_seq - 1, 0)
+                    self.socket.sendto(ack_packet.to_bytes(), address)
+                return packet
+            else:
+                return packet
+                
+        except socket.timeout:
+            return None
+        except Exception as e:
+            print(f"Error receiving packet: {e}")
+            return None
     
     def handle_timeout(self, seq_num: int) -> bool:
-        pass
+        if self.last_sent_packet is None or self.last_sent_address is None:
+            return False
+        
+        if self.retries >= self.max_retries:
+            print(f"Max retries exceeded for packet {seq_num}")
+            return False
+        
+        try:
+            self.socket.sendto(self.last_sent_packet.to_bytes(), self.last_sent_address)
+            self.retries += 1
+            return True
+        except Exception as e:
+            print(f"Error retransmitting packet: {e}")
+            return False
     
     def handle_duplicate(self, packet: RDTPacket) -> bool:
-        pass
+        if packet.has_flag(RDTFlags.ACK):
+            return packet.header.ack_number == self.current_seq - 1
+        return False
     
-    def send_file(self, file_path: str, address):
-        pass
+    def send_file(self, file_path: str, address: (str, int)) -> bool:
+        if not os.path.exists(file_path):
+            print(f"File {file_path} not found")
+            return False
+        
+        print(f"Starting upload of {file_path}")
+
+        try:
+            with open(file_path, 'rb') as file:
+                while True:
+                    chunk = file.read(1024)
+                    if not chunk:
+                        break
+                    
+                    packet = create_data_packet(0, chunk)
+                    
+                    while True:
+                        if self.send_packet(packet, address):
+                            ack_received = False
+                            start_time = time.time()
+                            
+                            while not ack_received and (time.time() - start_time) < self.timeout:
+                                received_packet = self.receive_packet()
+                                if received_packet and received_packet.has_flag(RDTFlags.ACK):
+                                    if received_packet.header.ack_number == self.current_seq -1:
+                                        print(f"ACK received for seq={self.current_seq -1}")
+                                        ack_received = True
+                                    else:
+                                        print(f"Unexpected ACK, expected {self.current_seq}, got {received_packet.header.ack_number}")
+                                        self.handle_duplicate(received_packet)
+                            
+                            if ack_received:
+                                break
+                            else:
+                                if not self.handle_timeout(self.current_seq - 1):
+                                    return False
+                        else:
+                            return False
+                
+                return True
+        except Exception as e:
+            print(f"Error sending file: {e}")
+            return False
     
     def receive_file(self, file_path: str) -> bool:
-        pass
+        try:
+            with open(file_path, 'wb') as file:
+                while True:
+                    packet = self.receive_packet()
+                    if packet is None:
+                        continue
+                    
+                    if packet.has_flag(RDTFlags.DATA):
+                        if packet.header.sequence_number == self.expected_seq:
+                            file.write(packet.payload)
+                        else:
+                            self.handle_duplicate(packet)
+                    
+                    elif packet.has_flag(RDTFlags.FIN):
+                        break
+                
+                return True
+        except Exception as e:
+            print(f"Error receiving file: {e}")
+            return False
+
+    def on_data(self, packet: RDTPacket):
+        if packet.header.sequence_number == self.expected_seq:
+            ack_num = packet.header.sequence_number
+            data_to_write = packet.payload
+            self.expected_seq = (self.expected_seq + 1) % 65536
+            return ack_num, data_to_write, self.expected_seq
+        prev_seq = self.expected_seq - 1 if self.expected_seq > 0 else 0
+        return prev_seq, b"", self.expected_seq
+
+    def on_ack(self, packet: RDTPacket) -> bool:
+        if not packet.has_flag(RDTFlags.ACK):
+            return False
+        if packet.header.ack_number == self.current_seq:
+            self.current_seq = (self.current_seq + 1) % 65536
+            return True
+        return packet.header.ack_number == (self.current_seq - 1)

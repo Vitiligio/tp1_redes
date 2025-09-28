@@ -76,6 +76,8 @@ class FileLockManager:
             if filename in self.file_locks:
                 del self.file_locks[filename]
 
+from protocols.stop_and_wait import StopAndWaitProtocol
+from protocols.selective_repeat import SelectiveRepeatProtocol
 
 class RDTProtocol:
     def __init__(self, storage_dir="server_files"):
@@ -129,7 +131,9 @@ class RDTProtocol:
                     'current_operation': None,
                     'current_filename': None,
                     'file_handle': None,
-                    'connected': False
+                    'connected': False,
+                    'proto': None,
+                    'proto_name': None
                 }
             
             client_state = self.client_states[address]
@@ -152,13 +156,12 @@ class RDTProtocol:
     def handle_syn(self, address, server_socket, client_state):
         print(f"SYN received from {address}")
         
-        # Send SYN-ACK
-        syn_ack = create_sync_packet(0)  # Create with SYN flag
-        syn_ack.set_flag(RDTFlags.ACK)   # Add ACK flag
+        syn_ack = create_sync_packet(0)
+        syn_ack.set_flag(RDTFlags.ACK)
         server_socket.sendto(syn_ack.to_bytes(), address)
         
         client_state['connected'] = True
-        client_state['expected_seq'] = 1  # Expect operation packet next
+        client_state['expected_seq'] = 1
         print(f"Sent SYN-ACK to {address}, expecting operation packet (seq=1)")
     
     def handle_data(self, packet, address, server_socket, client_state):
@@ -169,50 +172,63 @@ class RDTProtocol:
         expected_seq = client_state['expected_seq']
         seq_num = packet.header.sequence_number
         
-        if seq_num == expected_seq:
-            if seq_num == 1:
-                # This is the operation specification packet
-                operation, filename, protocol = parse_operation_packet(packet)
-                if operation and filename:
-                    client_state['current_operation'] = operation
-                    client_state['current_filename'] = filename
-                    client_state['protocol'] = protocol
-                    print(f"Operation received: {operation} for file: {filename} using {protocol}")
-                    
-                    # Prepare for file transfer
-                    if operation == "UPLOAD":
-                        filepath = os.path.join(self.storage_dir, filename)
-                        if not prepare_upload_to_server(filepath, filename, server_socket, client_state, address):
-                            return
-                        
-                    # Send ACK for operation packet
+        
+        if client_state['current_operation'] is None:
+            if expected_seq != 1 or seq_num != expected_seq:
+                print(f"Error: expected operation at seq=1, got seq={seq_num} (expected_seq={expected_seq})")
+                return
+            operation, filename, protocol = parse_operation_packet(packet)
+            if operation and filename:
+                client_state['current_operation'] = operation
+                client_state['current_filename'] = filename
+                client_state['protocol'] = protocol
+                client_state['proto_name'] = protocol
+                if protocol == "stop_and_wait":
+                    client_state['proto'] = StopAndWaitProtocol(server_socket)
+                elif protocol == "selective_repeat":
+                    client_state['proto'] = SelectiveRepeatProtocol(server_socket)
+                print(f"Operation received: {operation} for file: {filename} using {protocol}")
+                if operation == "UPLOAD":
+                    filepath = os.path.join(self.storage_dir, filename)
+                    if not prepare_upload_to_server(filepath, filename, server_socket, client_state, address):
+                        return
+                elif operation == "DOWNLOAD":
+                    filepath = os.path.join(self.storage_dir, filename)
+                    if not os.path.exists(filepath):
+                        print(f"Requested file not found: {filepath}")
+                        return
                     ack_packet = create_ack_packet(ack_num=1)
                     server_socket.sendto(ack_packet.to_bytes(), address)
-                    client_state['expected_seq'] = 2  # Expect first data packet next
-                    
-            else:
-                # This is a file data packet
-                if client_state['current_operation'] == "UPLOAD" and client_state['file_handle']:
-                    # Save file data
-                    client_state['file_handle'].write(packet.payload)
-                    print(f"Received file data seq={seq_num}, size={len(packet.payload)} bytes")
+                    if client_state['proto'] is not None:
+                        client_state['proto'].current_seq = 2
+                        print(f"Starting download of {filepath} to {address}")
+                        client_state['proto'].send_file(filepath, address)
+                        fin_ack = create_end_packet(0, seq_num=3)
+                        server_socket.sendto(fin_ack.to_bytes(), address)
+                        print(f"Download finished for: {filename}")
+                        try:
+                            server_socket.settimeout(None)
+                        except Exception:
+                            pass
+                    return
+
+        proto = client_state.get('proto')
+        if proto is None:
+            print("Error: no protocol instance for client")
+            return
+        proto.expected_seq = client_state['expected_seq']
+        ack_num, data_to_write, new_expected = proto.on_data(packet)
+        if client_state['current_operation'] == "UPLOAD" and client_state['file_handle']:
+            if data_to_write:
+                client_state['file_handle'].write(data_to_write)
+                print(f"Received file data up to seq={ack_num}, wrote {len(data_to_write)} bytes")
                 else: 
                     err_msg = create_error_packet(client_state.expected_seq, (f'002:OPERATION was not set correctly').encode())
                     # Send error response
                     server_socket.sendto(err_msg.to_bytes(), address)
-                
-                # Send ACK
-                ack_packet = create_ack_packet(ack_num=seq_num)
-                server_socket.sendto(ack_packet.to_bytes(), address)
-                client_state['expected_seq'] = seq_num + 1
-                
-        elif seq_num < expected_seq:
-            # Duplicate packet - resend ACK
-            print(f"Duplicate packet seq={seq_num}")
-            ack_packet = create_ack_packet(ack_num=seq_num)
-            server_socket.sendto(ack_packet.to_bytes(), address)
-        else:
-            print(f"Out-of-order packet seq={seq_num}, expected={expected_seq}")
+        ack_packet = create_ack_packet(ack_num=ack_num)
+        server_socket.sendto(ack_packet.to_bytes(), address)
+        client_state['expected_seq'] = new_expected
     
     def handle_fin(self, packet, address, server_socket, client_state):
         print(f"FIN received from {address}")
@@ -274,6 +290,10 @@ def main():
             pool.close()
             pool.join()
             break
+        except socket.timeout:
+            continue
+        except Exception as e:
+            print(f"Unexpected error: {e}")
 
 if __name__ == "__main__":
     main()
