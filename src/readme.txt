@@ -16,3 +16,11 @@ FALTA -
 Server Multi thread
 
 Conexion con servidor resulta mala desde el lado del cliente
+
+If server could not create file, sends a package to the client with the error flag and the error description on the body
+
+
+ERROR MESSAGES
+
+SERVER - 001:Could not create file with name {filename}
+SERVER - 002:OPERATION was not set correctly

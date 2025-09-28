@@ -119,6 +119,20 @@ def create_end_packet(ack_num: int, seq_num: int = 0) -> RDTPacket:
     header = RDTHeader(sequence_number=seq_num, ack_number=ack_num, flags=RDTFlags.FIN)
     return RDTPacket(header)
 
+def create_error_packet(ack_num: int, err_msg: bytes, seq_num: int = 0) -> RDTPacket:
+    header = RDTHeader(sequence_number=seq_num, ack_number=ack_num, flags=RDTFlags.ERR)
+    return RDTPacket(header, err_msg)
+
+def parse_error_packet(packet: RDTPacket) -> tuple:
+    if packet.payload:
+        data_str = packet.payload.decode('utf-8')
+        if ':' in data_str:
+            parts = data_str.split(':', 2)
+            code = parts[0]
+            msg = parts[1]
+            return code, msg
+    return None, None, None
+
 def create_operation_packet(seq_num: int, operation: str, filename: str, protocol: str = "stop_and_wait") -> RDTPacket:
     """Create packet for operation specification (UPLOAD/DOWNLOAD + filename + protocol)"""
     operation_data = f"{operation}:{filename}:{protocol}".encode('utf-8')
