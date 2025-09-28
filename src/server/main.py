@@ -221,10 +221,10 @@ class RDTProtocol:
             if data_to_write:
                 client_state['file_handle'].write(data_to_write)
                 print(f"Received file data up to seq={ack_num}, wrote {len(data_to_write)} bytes")
-                else: 
-                    err_msg = create_error_packet(client_state.expected_seq, (f'002:OPERATION was not set correctly').encode())
-                    # Send error response
-                    server_socket.sendto(err_msg.to_bytes(), address)
+            else: 
+                err_msg = create_error_packet(client_state.expected_seq, (f'002:OPERATION was not set correctly').encode())
+                # Send error response
+                server_socket.sendto(err_msg.to_bytes(), address)
         ack_packet = create_ack_packet(ack_num=ack_num)
         server_socket.sendto(ack_packet.to_bytes(), address)
         client_state['expected_seq'] = new_expected
