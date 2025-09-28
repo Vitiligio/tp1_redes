@@ -3,6 +3,7 @@ import socket
 import os
 from helpers.message import *
 from client_config import SERVER_IP, SERVER_PORT, SOCKET_TIMEOUT, PACKET_SIZE
+from protocols.stop_and_wait import StopAndWaitProtocol
 
 def connect_server(addr):
     """Establish connection with server using SYN handshake"""
@@ -58,51 +59,10 @@ def send_operation_request(client_socket, addr, operation: str, filename: str, p
     return False
 
 def upload_file(client_socket, addr, filename: str):
-    """Upload file to server"""
-    if not os.path.exists(filename):
-        print(f"File {filename} not found")
-        return False
-    
-    print(f"Starting upload of {filename}")
-    
-    # Read and send file in chunks
-    seq_num = 2  # Start after operation packet (seq=1)
-    
-    try:
-        with open(filename, 'rb') as file:
-            while True:
-                chunk = file.read(PACKET_SIZE)  # Read packets of configured size
-                if not chunk:
-                    break
-                
-                data_packet = create_data_packet(seq_num=seq_num, data=chunk)
-                client_socket.sendto(data_packet.to_bytes(), addr)
-                print(f"Sent data chunk seq={seq_num}, size={len(chunk)} bytes")
-                
-                # Wait for ACK
-                try:
-                    data, server = client_socket.recvfrom(1024)
-                    ack_packet = RDTPacket.from_bytes(data)
-                    
-                    if ack_packet.verify_integrity() and ack_packet.has_flag(RDTFlags.ACK):
-                        if ack_packet.header.ack_number == seq_num:
-                            print(f"ACK received for seq={seq_num}")
-                            seq_num += 1
-                        else:
-                            print(f"Unexpected ACK, expected {seq_num}, got {ack_packet.header.ack_number}")
-                    else:
-                        print("Invalid ACK packet")
-                        
-                except socket.timeout:
-                    print(f"Timeout waiting for ACK seq={seq_num}, retrying...")
-                    # In real implementation, you'd retransmit here
-                    continue
-                    
-    except Exception as e:
-        print(f"Error reading file: {e}")
-        return False
-    
-    return True
+    """Upload file to server using Stop & Wait protocol"""
+    proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT)
+    proto.current_seq = 2
+    return proto.send_file(filename, addr)
 
 def download_file(client_socket, addr, filename: str):
     """Download file from server"""
