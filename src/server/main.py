@@ -4,6 +4,7 @@ import random
 import socket
 import os
 import threading
+import tempfile
 from helpers.message import *
 from server_config import *
 from contextlib import contextmanager
@@ -69,12 +70,6 @@ class FileLockManager:
             if filename not in self.file_locks:
                 self.file_locks[filename] = ReaderWriterLock()
             return self.file_locks[filename]
-    
-    def cleanup_file_lock(self, filename):
-        """Clean up a file lock when it's no longer needed"""
-        with self.dict_lock:
-            if filename in self.file_locks:
-                del self.file_locks[filename]
 
 from protocols.stop_and_wait import StopAndWaitProtocol
 from protocols.selective_repeat import SelectiveRepeatProtocol
@@ -83,6 +78,7 @@ class RDTProtocol:
     def __init__(self, storage_dir="server_files"):
         self.states_lock = threading.Lock()
         self.client_states = {}
+        self.file_lock_manager = FileLockManager()  # Add file locking
         self.storage_dir = storage_dir
         os.makedirs(storage_dir, exist_ok=True)
     
@@ -96,7 +92,8 @@ class RDTProtocol:
                     'current_operation': None,
                     'current_filename': None,
                     'file_handle': None,
-                    'connected': False
+                    'connected': False,
+                    'temp_file_path': None  # For atomic uploads
                 }
             return self.client_states[address]
     
@@ -117,50 +114,31 @@ class RDTProtocol:
         except Exception as e:
             print(f"Error processing packet from {address}: {e}")
     
-    def handle_packet(self, data, address, server_socket):
-        try:
-            packet = RDTPacket.from_bytes(data)
-            
-            if not packet.verify_integrity():
-                print(f"Packet from {address} failed integrity check")
-                return
-            
-            if address not in self.client_states:
-                self.client_states[address] = {
-                    'expected_seq': 0,
-                    'current_operation': None,
-                    'current_filename': None,
-                    'file_handle': None,
-                    'connected': False
-                }
-            
-            client_state = self.client_states[address]
-            
-            if packet.has_flag(RDTFlags.SYN):
-                self.handle_syn(address, server_socket, client_state)
-            elif packet.has_flag(RDTFlags.DATA):
-                self.handle_data(packet, address, server_socket, client_state)
-            elif packet.has_flag(RDTFlags.FIN):
-                self.handle_fin(packet, address, server_socket, client_state)
-                with self.states_lock:
-                    if address in self.client_states:
-                        del self.client_states[address]
-            elif packet.has_flag(RDTFlags.ACK):
-                self.handle_ack(packet, address, client_state)
-                
-        except Exception as e:
-            print(f"Error processing packet from {address}: {e}")
+    def _process_packet_for_client(self, packet, address, server_socket, client_state):
+        """Process packet while holding client-specific lock"""
+        if packet.has_flag(RDTFlags.SYN):
+            self.handle_syn(address, server_socket, client_state)
+        elif packet.has_flag(RDTFlags.DATA):
+            self.handle_data(packet, address, server_socket, client_state)
+        elif packet.has_flag(RDTFlags.FIN):
+            self.handle_fin(packet, address, server_socket, client_state)
+            # Clean up client state
+            with self.states_lock:
+                if address in self.client_states:
+                    del self.client_states[address]
+        elif packet.has_flag(RDTFlags.ACK):
+            self.handle_ack(packet, address, client_state)
     
     def handle_syn(self, address, server_socket, client_state):
         print(f"SYN received from {address}")
         
         # Send SYN-ACK
-        syn_ack = create_sync_packet(0)  # Create with SYN flag
-        syn_ack.set_flag(RDTFlags.ACK)   # Add ACK flag
+        syn_ack = create_sync_packet(0)
+        syn_ack.set_flag(RDTFlags.ACK)
         server_socket.sendto(syn_ack.to_bytes(), address)
         
         client_state['connected'] = True
-        client_state['expected_seq'] = 1  # Expect operation packet next
+        client_state['expected_seq'] = 1
         print(f"Sent SYN-ACK to {address}, expecting operation packet (seq=1)")
     
     def handle_data(self, packet, address, server_socket, client_state):
@@ -171,81 +149,176 @@ class RDTProtocol:
         expected_seq = client_state['expected_seq']
         seq_num = packet.header.sequence_number
         
-        
         if client_state['current_operation'] is None:
             if expected_seq != 1 or seq_num != expected_seq:
                 print(f"Error: expected operation at seq=1, got seq={seq_num} (expected_seq={expected_seq})")
                 return
+            
             operation, filename, protocol = parse_operation_packet(packet)
             if operation and filename:
                 client_state['current_operation'] = operation
                 client_state['current_filename'] = filename
                 client_state['protocol'] = protocol
                 client_state['proto_name'] = protocol
+                
                 if protocol == "stop_and_wait":
                     client_state['proto'] = StopAndWaitProtocol(server_socket)
                 elif protocol == "selective_repeat":
                     client_state['proto'] = SelectiveRepeatProtocol(server_socket)
+                
                 print(f"Operation received: {operation} for file: {filename} using {protocol}")
+                
                 if operation == "UPLOAD":
-                    filepath = os.path.join(self.storage_dir, filename)
-                    if not prepare_upload_to_server(filepath, filename, server_socket, client_state, address):
+                    if not self._prepare_upload(filename, server_socket, client_state, address):
                         return
                 elif operation == "DOWNLOAD":
-                    filepath = os.path.join(self.storage_dir, filename)
-                    if not os.path.exists(filepath):
-                        print(f"Requested file not found: {filepath}")
+                    if not self._prepare_download(filename, server_socket, client_state, address):
                         return
-                    ack_packet = create_ack_packet(ack_num=1)
-                    server_socket.sendto(ack_packet.to_bytes(), address)
-                    if client_state['proto'] is not None:
-                        client_state['proto'].current_seq = 2
-                        print(f"Starting download of {filepath} to {address}")
-                        client_state['proto'].send_file(filepath, address)
-                        fin_ack = create_end_packet(0, seq_num=3)
-                        server_socket.sendto(fin_ack.to_bytes(), address)
-                        print(f"Download finished for: {filename}")
-                        try:
-                            server_socket.settimeout(None)
-                        except Exception:
-                            pass
-                    return
-
+                    
         proto = client_state.get('proto')
         if proto is None:
             print("Error: no protocol instance for client")
+            err_msg = create_error_packet(client_state['expected_seq'], 
+                                        '002:OPERATION was not set correctly'.encode())
+            server_socket.sendto(err_msg.to_bytes(), address)
             return
+        
         proto.expected_seq = client_state['expected_seq']
         ack_num, data_to_write, new_expected = proto.on_data(packet)
-        if client_state['current_operation'] == "UPLOAD" and client_state['file_handle']:
-            if data_to_write:
-                client_state['file_handle'].write(data_to_write)
-                print(f"Received file data up to seq={ack_num}, wrote {len(data_to_write)} bytes")
-            else: 
-                err_msg = create_error_packet(client_state.expected_seq, (f'002:OPERATION was not set correctly').encode())
-                # Send error response
-                server_socket.sendto(err_msg.to_bytes(), address)
+        
+        if client_state['current_operation'] == "UPLOAD" and data_to_write:
+            self._handle_upload_data(data_to_write, client_state, address, server_socket)
+        
         ack_packet = create_ack_packet(ack_num=ack_num)
         server_socket.sendto(ack_packet.to_bytes(), address)
         client_state['expected_seq'] = new_expected
     
+    def _prepare_upload(self, filename, server_socket, client_state, address):
+        """Prepare for file upload with safe locking"""
+        try:
+            # Create temporary file for upload (atomic operation)
+            temp_file = tempfile.NamedTemporaryFile(dir=self.storage_dir, 
+                                                   prefix=f".{filename}.upload.", 
+                                                   delete=False)
+            client_state['temp_file_path'] = temp_file.name
+            client_state['file_handle'] = temp_file
+            print(f"Ready to receive upload to temporary file: {temp_file.name}")
+            return True
+        except Exception as e:
+            print(f"Error creating temporary file for upload: {e}")
+            err_msg = create_error_packet(client_state['expected_seq'], 
+                                        f'001:Could not create file with name {filename}'.encode())
+            server_socket.sendto(err_msg.to_bytes(), address)
+            return False
+    
+    def _prepare_download(self, filename, server_socket, client_state, address):
+        """Prepare for file download with safe locking"""
+        filepath = os.path.join(self.storage_dir, filename)
+        
+        try:
+            # Use read lock for safe concurrent downloads
+            with self.file_lock_manager.read_lock(filename):
+                if not os.path.exists(filepath):
+                    print(f"Requested file not found: {filepath}")
+                    err_msg = create_error_packet(client_state['expected_seq'], 
+                                                f'003:Could not find file with name {filename}'.encode())
+                    server_socket.sendto(err_msg.to_bytes(), address)
+                    return False
+                
+                # Send ACK for operation packet
+                ack_packet = create_ack_packet(ack_num=1)
+                server_socket.sendto(ack_packet.to_bytes(), address)
+                
+                if client_state['proto'] is not None:
+                    client_state['proto'].current_seq = 2
+                    print(f"Starting download of {filepath} to {address}")
+                    
+                    # Send file with read lock held (entire file transfer protected)
+                    success = client_state['proto'].send_file(filepath, address)
+                    
+                    if success:
+                        fin_ack = create_end_packet(0, seq_num=3)
+                        server_socket.sendto(fin_ack.to_bytes(), address)
+                        print(f"Download finished for: {filename}")
+                    else:
+                        print(f"Download failed for: {filename}")
+                    
+                    try:
+                        server_socket.settimeout(None)
+                    except Exception:
+                        pass
+                return True
+                
+        except Exception as e:
+            print(f"Error during download preparation: {e}")
+            err_msg = create_error_packet(client_state['expected_seq'], 
+                                        f'004:Error accessing file {filename}'.encode())
+            server_socket.sendto(err_msg.to_bytes(), address)
+            return False
+    
+    def _handle_upload_data(self, data, client_state, address, server_socket):
+        """Handle incoming upload data safely"""
+        if client_state.get('file_handle'):
+            try:
+                client_state['file_handle'].write(data)
+                print(f"Received file data, wrote {len(data)} bytes to temporary file")
+            except Exception as e:
+                print(f"Error writing upload data: {e}")
+                err_msg = create_error_packet(client_state['expected_seq'], 
+                                            f'005:Error writing file data'.encode())
+                server_socket.sendto(err_msg.to_bytes(), address)
+    
     def handle_fin(self, packet, address, server_socket, client_state):
         print(f"FIN received from {address}")
         
-        # Clean up file handle if upload was in progress
-        if client_state.get('file_handle'):
-            client_state['file_handle'].close()
-            print(f"Upload completed for: {client_state['current_filename']}")
+        # Handle upload completion with safe file replacement
+        if (client_state.get('current_operation') == "UPLOAD" and 
+            client_state.get('file_handle') and 
+            client_state.get('current_filename')):
+            
+            self._finalize_upload(client_state)
         
         # Send FIN-ACK
         fin_ack = create_end_packet(0, seq_num=packet.header.sequence_number + 1)
         server_socket.sendto(fin_ack.to_bytes(), address)
         
-        # Clean up client state
-        if address in self.client_states:
-            del self.client_states[address]
-        
         print(f"Connection with {address} closed")
+    
+    def _finalize_upload(self, client_state):
+        """Finalize upload with atomic file replacement using write lock"""
+        filename = client_state['current_filename']
+        temp_path = client_state.get('temp_file_path')
+        
+        if not temp_path or not os.path.exists(temp_path):
+            print(f"Upload error: temporary file not found for {filename}")
+            return
+        
+        try:
+            # Close the temporary file
+            if client_state['file_handle']:
+                client_state['file_handle'].close()
+            
+            # Use write lock for atomic file replacement
+            with self.file_lock_manager.write_lock(filename):
+                final_path = os.path.join(self.storage_dir, filename)
+                
+                # Remove existing file if it exists
+                if os.path.exists(final_path):
+                    os.remove(final_path)
+                
+                # Atomically move temporary file to final location
+                os.rename(temp_path, final_path)
+                
+                print(f"Upload completed and finalized for: {filename}")
+                
+        except Exception as e:
+            print(f"Error finalizing upload for {filename}: {e}")
+            # Clean up temporary file on error
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except:
+                pass
     
     def handle_ack(self, packet, address, client_state):
         print(f"ACK received from {address} for seq={packet.header.ack_number}")
@@ -255,19 +328,6 @@ def worker_logic(data, address, server_socket, rdt_protocol):
         rdt_protocol.handle_packet(data, address, server_socket)
     except Exception as e:
         print(f"Unexpected error: {e}")
-
-
-def prepare_upload_to_server(filepath, filename, server_socket, client_state, address):
-    try:
-        client_state['file_handle'] = open(filepath, 'wb')
-        print(f"Ready to receive upload: {filepath}")
-        return True
-    except Exception as e:
-        print(f"Error creating file: {e}")
-        err_msg = create_error_packet(client_state.expected_seq, (f'001:Could not create file with name {filename}').encode())
-        # Send error response
-        server_socket.sendto(err_msg.to_bytes(), address)
-        return False
 
 def main():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

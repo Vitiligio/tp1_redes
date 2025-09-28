@@ -2,6 +2,8 @@ ejecutar desde src con comandos
 python3 -m server.main
 python3 -m client.main
 
+FUNCA - python3 -m client.main download -n test.txt
+
 la logica
 
 cliente manda sync
@@ -24,3 +26,4 @@ ERROR MESSAGES
 
 SERVER - 001:Could not create file with name {filename}
 SERVER - 002:OPERATION was not set correctly
+SERVER - 003:Could not find file with name {filename}

@@ -17,7 +17,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
         self.ack_received = {}
         self.duplicate_ack_count = {}
     
-    def send_packet(self, packet: RDTPacket, address: (str, int)) -> bool:
+    def send_packet(self, packet: RDTPacket, address: tuple) -> bool:
         if len(self.send_window) >= self.window_size:
             return False
         
@@ -86,7 +86,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                 return True
         return False
     
-    def send_file(self, file_path: str, address: (str, int)) -> bool:
+    def send_file(self, file_path: str, address: tuple) -> bool:
         try:
             with open(file_path, 'rb') as file:
                 while True:
