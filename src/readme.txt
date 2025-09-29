@@ -2,7 +2,7 @@ ejecutar desde src con comandos
 python3 -m server.main
 python3 -m client.main
 
-FUNCA - python3 -m client.main download -n test.txt
+python3 -m client.main upload -H 127.0.0.1 -p 12000 -v -s /home/lied/Desktop/pico.zip -n pico.zip 
 
 la logica
 
