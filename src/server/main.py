@@ -5,6 +5,8 @@ import socket
 import os
 import threading
 import tempfile
+import argparse
+import sys
 from helpers.message import *
 from server_config import *
 from contextlib import contextmanager
@@ -329,30 +331,49 @@ def worker_logic(data, address, server_socket, rdt_protocol):
     except Exception as e:
         print(f"Unexpected error: {e}")
 
-def main():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind((SERVER_IP, SERVER_PORT))
-    
-    rdt_protocol = RDTProtocol(storage_dir=STORAGE_DIR)
-    
-    print(f"RDT Server is running on {SERVER_IP}:{SERVER_PORT}")
-    print(f"Files will be stored in: {STORAGE_DIR}/")
-    
-    pool = multiprocessing.pool.ThreadPool(processes=WORKERS)
+def create_parser():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('-h', '--help', action='store_true')
+    parser.add_argument('-v', '--verbose', action='store_true')
+    parser.add_argument('-q', '--quiet', action='store_true')
+    parser.add_argument('-H', '--host', type=str, default=SERVER_IP)
+    parser.add_argument('-p', '--port', type=int, default=SERVER_PORT)
+    parser.add_argument('-s', '--storage', type=str, default=STORAGE_DIR)
+    return parser
 
+def main():
+    parser = create_parser()
+    args = parser.parse_args()
+    if args.help:
+        parser.print_help()
+        return
+    host = args.host
+    port = args.port
+    storage = args.storage
+    quiet = args.quiet
+    os.makedirs(storage, exist_ok=True)
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server_socket.bind((host, port))
+    rdt_protocol = RDTProtocol(storage_dir=storage)
+    if not quiet:
+        print(f"RDT Server is running on {host}:{port}")
+        print(f"Files will be stored in: {storage}/")
+    pool = multiprocessing.pool.ThreadPool(processes=WORKERS)
     while True:
         try:
             data, address = server_socket.recvfrom(2048)
             pool.apply_async(worker_logic, (data, address, server_socket, rdt_protocol))
         except KeyboardInterrupt:
-            print("\nServer shutting down...")
+            if not quiet:
+                print("\nServer shutting down...")
             pool.close()
             pool.join()
             break
         except socket.timeout:
             continue
         except Exception as e:
-            print(f"Unexpected error: {e}")
+            if not quiet:
+                print(f"Unexpected error: {e}")
 
 if __name__ == "__main__":
     main()
