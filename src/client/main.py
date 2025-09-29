@@ -234,96 +234,120 @@ def wait_for_fin_ack(client_socket, addr, timeout=15):
     
     return False
 
-def parse_arguments():
+def create_upload_parser():
     parser = argparse.ArgumentParser(
-        description='File transfer client for reliable data transfer protocol',
+        description='Upload a file to the server',
         add_help=False
     )
     
-    # Optional arguments
-    parser.add_argument('-h', '--help', action='store_true', help='show this help message and exit')
-    parser.add_argument('-v', '--verbose', action='store_true', help='increase output verbosity')
-    parser.add_argument('-q', '--quiet', action='store_true', help='decrease output verbosity')
-    parser.add_argument('-H', '--host', type=str, default=SERVER_IP, help='server IP address')
-    parser.add_argument('-p', '--port', type=int, default=SERVER_PORT, help='server port')
-    parser.add_argument('-s', '--src', type=str, help='source file path')
-    parser.add_argument('-n', '--name', type=str, required=True, help='file name')
-    parser.add_argument('-r', '--protocol', type=str, choices=['stop_and_wait', 'selective_repeat'], 
-                       default='stop_and_wait', help='error recovery protocol')
-    
-    # Positional argument for command (upload/download)
-    parser.add_argument('command', type=str, choices=['upload', 'download'], nargs='?', 
-                       help='command to execute (upload or download)')
+    parser.add_argument('-h', '--help', action='store_true', 
+                       help='show this help message and exit')
+    parser.add_argument('-v', '--verbose', action='store_true', 
+                       help='increase output verbosity')
+    parser.add_argument('-q', '--quiet', action='store_true', 
+                       help='decrease output verbosity')
+    parser.add_argument('-H', '--host', type=str, default=SERVER_IP, 
+                       help='server IP address')
+    parser.add_argument('-p', '--port', type=int, default=SERVER_PORT, 
+                       help='server port')
+    parser.add_argument('-s', '--src', type=str, required=True,
+                       help='source file path')
+    parser.add_argument('-n', '--name', type=str, required=True,
+                       help='file name on server')
+    parser.add_argument('-r', '--protocol', type=str, 
+                       choices=['stop_and_wait', 'selective_repeat'], 
+                       default='stop_and_wait', 
+                       help='error recovery protocol')
     
     return parser
 
-def receive_args() -> tuple:
-    parser = parse_arguments()
-    should_exit = False
-    if len(sys.argv) == 1:
-        parser.print_help()
-        should_exit = True
+def create_download_parser():
+    parser = argparse.ArgumentParser(
+        description='Download a file from the server',
+        add_help=False
+    )
+    parser.add_argument('-h', '--help', action='store_true', 
+                       help='show this help message and exit')
+    parser.add_argument('-v', '--verbose', action='store_true', 
+                       help='increase output verbosity')
+    parser.add_argument('-q', '--quiet', action='store_true', 
+                       help='decrease output verbosity')
+    parser.add_argument('-H', '--host', type=str, default=SERVER_IP, 
+                       help='server IP address')
+    parser.add_argument('-p', '--port', type=int, default=SERVER_PORT, 
+                       help='server port')
+    parser.add_argument('-d', '--dst', type=str, 
+                       help='destination file path')
+    parser.add_argument('-n', '--name', type=str, required=True,
+                       help='file name on server')
+    parser.add_argument('-r', '--protocol', type=str, 
+                       choices=['stop_and_wait', 'selective_repeat'], 
+                       default='stop_and_wait', 
+                       help='error recovery protocol')
+    return parser
+
+def validate_upload_args(args):
+    if not os.path.exists(args.src):
+        print(f"Error: source file '{args.src}' does not exist")
+        return False
+    
+    if os.path.isdir(args.src):
+        print(f"Error: source path '{args.src}' is a directory, not a file")
+        return False
+    
+    if not os.path.isfile(args.src):
+        print(f"Error: source path '{args.src}' is not a valid file")
+        return False
+    
+    return True
+
+def upload_main():
+    """Main function for upload command"""
+    parser = create_upload_parser()
     args = parser.parse_args()
+    
+    # Handle help
     if args.help:
         parser.print_help()
-        should_exit = True
-    if not args.command:
-        print("Invadil set of arguments")
-        parser.print_usage()
-        should_exit = True
-    return should_exit, args
-    
-    
-def main():
-    should_exit, args = receive_args()
-    if should_exit:
         return
     
+    # Validate arguments
+    if not validate_upload_args(args):
+        return
+    
+    # Set parameters
     verbose = args.verbose
-    quiet = not verbose
-    operation = args.command.upper()
+    quiet = args.quiet
     filename = args.name
     protocol = args.protocol
     
-    # Validate source file for upload
-    if args.command == 'upload':
-        if not args.src:
-            print("Error: source file path (-s/--src) is required for upload")
-            return
-        if not os.path.exists(args.src):
-            print(f"Error: source file '{args.src}' does not exist")
-            return
-    
-    
     # Use provided host and port, or defaults from client_config
-    addr = (args.host, args.port)
+    host = args.host
+    port = args.port
+    addr = (host, port)
     
     if not quiet:
-        print(f"Operation: {operation}")
+        print(f"Operation: UPLOAD")
         print(f"Filename: {filename}")
         print(f"Protocol: {protocol}")
         print(f"Server: {addr}")
-        if args.command == 'upload':
-            print(f"Source file: {args.src}")
+        print(f"Source file: {args.src}")
     
-    
+    # Connect to server
     connection_made, client_socket = connect_server(addr)
     
     if connection_made:
-        if send_operation_request(client_socket, addr, operation, filename, protocol):
-            if operation == "UPLOAD":
-                success = upload_file(client_socket, addr, args.src, protocol, verbose=verbose)
-                if success:
-                    if not quiet:
-                        print("Upload completed successfully")
-                else:
-                    print("Upload failed")
-            elif operation == "DOWNLOAD":
-                success = download_file(client_socket, addr, filename, protocol, verbose=verbose)
-                if not success and not quiet:
-                    print("Download failed")
+        # Send operation specification
+        if send_operation_request(client_socket, addr, "UPLOAD", filename, protocol):
+            # For upload, use the source file path directly
+            success = upload_file(client_socket, addr, args.src, protocol, verbose)
+            if success:
+                if not quiet:
+                    print("Upload completed successfully")
+            else:
+                print("Upload failed")
         
-        # Close connection
+        # Close connection gracefully
         if not quiet:
             print("Closing connection...")
         
@@ -333,13 +357,69 @@ def main():
         
         # Wait for FIN-ACK with short timeout
         if wait_for_fin_ack(client_socket, addr, timeout=2):
-            if not quiet:
+            if verbose:
                 print("Connection closed gracefully")
         else:
-            if not quiet:
+            if verbose:
                 print("Server didn't respond to FIN, closing anyway")
     
     client_socket.close()
 
-if __name__ == "__main__":
-    main()
+def download_main():
+    """Main function for download command"""
+    parser = create_download_parser()
+    args = parser.parse_args()
+    
+    # Handle help
+    if args.help:
+        parser.print_help()
+        return
+    
+    # Set parameters
+    verbose = args.verbose
+    quiet = args.quiet
+    filename = args.name
+    protocol = args.protocol
+    dest_path = args.dst
+    
+    # Use provided host and port, or defaults from client_config
+    host = args.host
+    port = args.port
+    addr = (host, port)
+    
+    if not quiet:
+        print(f"Operation: DOWNLOAD")
+        print(f"Filename: {filename}")
+        print(f"Protocol: {protocol}")
+        print(f"Server: {addr}")
+        if dest_path:
+            print(f"Destination: {dest_path}")
+    
+    # Connect to server
+    connection_made, client_socket = connect_server(addr)
+    
+    if connection_made:
+        # Send operation specification
+        if send_operation_request(client_socket, addr, "DOWNLOAD", filename, protocol):
+            # For download, use the destination path if provided
+            success = download_file(client_socket, addr, filename, protocol, dest_path, verbose)
+            if not success and not quiet:
+                print("Download failed")
+        
+        # Close connection gracefully
+        if not quiet:
+            print("Closing connection...")
+        
+        # Send FIN packet
+        fin_packet = create_end_packet(ack_num=0, seq_num=100)
+        client_socket.sendto(fin_packet.to_bytes(), addr)
+        
+        # Wait for FIN-ACK with short timeout
+        if wait_for_fin_ack(client_socket, addr, timeout=2):
+            if verbose:
+                print("Connection closed gracefully")
+        else:
+            if verbose:
+                print("Server didn't respond to FIN, closing anyway")
+    
+    client_socket.close()
