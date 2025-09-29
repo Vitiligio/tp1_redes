@@ -6,9 +6,10 @@ from .base_protocol import BaseRDTProtocol
 
 class StopAndWaitProtocol(BaseRDTProtocol):
     
-    def __init__(self, socket: socket.socket, timeout: int = 5, max_retries: int = 3):
+    def __init__(self, socket: socket.socket, timeout: int = 5, max_retries: int = 3, verbose: bool = False):
         super().__init__(socket, timeout)
         self.max_retries = max_retries
+        self.verbose = verbose
         self.current_seq = 0
         self.expected_seq = 0
         self.last_sent_packet = None
@@ -25,7 +26,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
             self.last_sent_address = address
             return True
         except Exception as e:
-            print(f"Error sending packet: {e}")
+            if self.verbose: print(f"Error sending packet: {e}")
             return False
 
     def receive_packet(self, expected_seq: int = None) -> RDTPacket:
@@ -34,7 +35,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
             packet = RDTPacket.from_bytes(data)
 
             if not packet.verify_integrity():
-                print(f"Packet from {address} failed integrity check")
+                if self.verbose: print(f"Packet from {address} failed integrity check")
                 return None
             
             if packet.has_flag(RDTFlags.ACK):
@@ -59,7 +60,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
         except socket.timeout:
             return None
         except Exception as e:
-            print(f"Error receiving packet: {e}")
+            if self.verbose: print(f"Error receiving packet: {e}")
             return None
     
     def handle_timeout(self, seq_num: int) -> bool:
@@ -67,7 +68,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
             return False
         
         if self.retries >= self.max_retries:
-            print(f"Max retries exceeded for packet {seq_num}")
+            if self.verbose: print(f"Max retries exceeded for packet {seq_num}")
             return False
         
         try:
@@ -75,7 +76,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
             self.retries += 1
             return True
         except Exception as e:
-            print(f"Error retransmitting packet: {e}")
+            if self.verbose: print(f"Error retransmitting packet: {e}")
             return False
     
     def handle_duplicate(self, packet: RDTPacket) -> bool:
@@ -85,10 +86,10 @@ class StopAndWaitProtocol(BaseRDTProtocol):
     
     def send_file(self, file_path: str, address: (str, int)) -> bool:
         if not os.path.exists(file_path):
-            print(f"File {file_path} not found")
+            if self.verbose: print(f"File {file_path} not found")
             return False
         
-        print(f"Starting upload of {file_path}")
+        if self.verbose: print(f"Starting upload of {file_path}")
 
         try:
             with open(file_path, 'rb') as file:
@@ -108,10 +109,10 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                                 received_packet = self.receive_packet()
                                 if received_packet and received_packet.has_flag(RDTFlags.ACK):
                                     if received_packet.header.ack_number == self.current_seq -1:
-                                        print(f"ACK received for seq={self.current_seq -1}")
+                                        if self.verbose: print(f"ACK received for seq={self.current_seq -1}")
                                         ack_received = True
                                     else:
-                                        print(f"Unexpected ACK, expected {self.current_seq}, got {received_packet.header.ack_number}")
+                                        if self.verbose: print(f"Unexpected ACK, expected {self.current_seq}, got {received_packet.header.ack_number}")
                                         self.handle_duplicate(received_packet)
                             
                             if ack_received:
@@ -124,7 +125,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                 
                 return True
         except Exception as e:
-            print(f"Error sending file: {e}")
+            if self.verbose: print(f"Error sending file: {e}")
             return False
     
     def receive_file(self, file_path: str) -> bool:
@@ -146,7 +147,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                 
                 return True
         except Exception as e:
-            print(f"Error receiving file: {e}")
+            if self.verbose: print(f"Error receiving file: {e}")
             return False
 
     def on_data(self, packet: RDTPacket):

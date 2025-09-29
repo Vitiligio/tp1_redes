@@ -6,10 +6,11 @@ from .base_protocol import BaseRDTProtocol
 class SelectiveRepeatProtocol(BaseRDTProtocol):
     
     def __init__(self, socket: socket.socket, timeout: int = 5, max_retries: int = 3, 
-                 window_size: int = 8):
+                 window_size: int = 8, verbose: bool = False):
         super().__init__(socket, timeout)
         self.max_retries = max_retries
         self.window_size = window_size
+        self.verbose = verbose
         self.current_seq = 0
         self.expected_seq = 0
         self.send_window = {}
@@ -37,7 +38,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
             self.current_seq = (self.current_seq + 1) % 65536
             return True
         except Exception as e:
-            print(f"Error sending packet {seq_num}: {e}")
+            if self.verbose: print(f"Error sending packet {seq_num}: {e}")
             return False
     
     def receive_packet(self, expected_seq: int = None) -> RDTPacket:
@@ -56,7 +57,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
         except socket.timeout:
             return None
         except Exception as e:
-            print(f"Error receiving packet: {e}")
+            if self.verbose: print(f"Error receiving packet: {e}")
             return None
     
     def handle_timeout(self, seq_num: int) -> bool:
@@ -65,7 +66,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
         
         window_entry = self.send_window[seq_num]
         if window_entry['retries'] >= self.max_retries:
-            print(f"Max retries exceeded for packet {seq_num}")
+            if self.verbose: print(f"Max retries exceeded for packet {seq_num}")
             del self.send_window[seq_num]
             del self.ack_received[seq_num]
             return False
@@ -76,7 +77,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
             window_entry['timestamp'] = time.time()
             return True
         except Exception as e:
-            print(f"Error retransmitting packet {seq_num}: {e}")
+            if self.verbose: print(f"Error retransmitting packet {seq_num}: {e}")
             return False
     
     def handle_duplicate(self, packet: RDTPacket) -> bool:
@@ -105,7 +106,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                         time.sleep(0.005)
                 return True
         except Exception as e:
-            print(f"Error sending file: {e}")
+            if self.verbose: print(f"Error sending file: {e}")
             return False
     
     def receive_file(self, file_path: str) -> bool:
@@ -127,7 +128,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                         break
                 return True
         except Exception as e:
-            print(f"Error receiving file: {e}")
+            if self.verbose: print(f"Error receiving file: {e}")
             return False
     
     def slide_send_window(self):
@@ -165,7 +166,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
         try:
             self.socket.sendto(ack_packet.to_bytes(), address)
         except Exception as e:
-            print(f"Error sending ACK: {e}")
+            if self.verbose: print(f"Error sending ACK: {e}")
         
         return packet
     
@@ -174,7 +175,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
     
     def _fast_retransmit(self, seq_num: int):
         if seq_num in self.send_window:
-            print(f"Fast retransmit for packet {seq_num}")
+            if self.verbose: print(f"Fast retransmit for packet {seq_num}")
             self.handle_timeout(seq_num)
     
     def _check_timeouts(self):

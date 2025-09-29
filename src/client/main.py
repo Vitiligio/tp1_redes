@@ -63,15 +63,15 @@ def send_operation_request(client_socket, addr, operation: str, filename: str, p
     
     return False
 
-def upload_file(client_socket, addr, filename: str, protocol: str):
+def upload_file(client_socket, addr, filename: str, protocol: str, verbose: bool = False):
     """Upload file to server using specified protocol"""
     if protocol == "stop_and_wait":
-        proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT)
+        proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT, verbose=verbose)
     elif protocol == "selective_repeat":
-        proto = SelectiveRepeatProtocol(client_socket, timeout=SOCKET_TIMEOUT)
+        proto = SelectiveRepeatProtocol(client_socket, timeout=SOCKET_TIMEOUT, verbose=verbose)
     else:
         print(f"Unknown protocol: {protocol}, using stop_and_wait")
-        proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT)
+        proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT, verbose=verbose)
     
     proto.current_seq = 2
     return proto.send_file(filename, addr)
@@ -83,7 +83,7 @@ def download_file(client_socket, addr, filename: str, protocol: str, verbose: bo
     elif protocol == "selective_repeat":
         proto = SelectiveRepeatProtocol(client_socket, timeout=SOCKET_TIMEOUT)
     else:
-        print(f"Unknown protocol: {protocol}, using stop_and_wait")
+        if verbose: print(f"Unknown protocol: {protocol}, using stop_and_wait")
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT)
     
     print(f"Starting download of: {filename} using {protocol}")
@@ -95,8 +95,7 @@ def download_file(client_socket, addr, filename: str, protocol: str, verbose: bo
                                                delete=False, 
                                                dir=".")
         temp_file_path = temp_file.name
-        if verbose:
-            print(f"Created temporary file: {temp_file_path}")
+        if verbose: print(f"Created temporary file: {temp_file_path}")
     except Exception as e:
         print(f"Error creating temporary file: {e}")
         return False
@@ -105,15 +104,11 @@ def download_file(client_socket, addr, filename: str, protocol: str, verbose: bo
     file_handle = None
     
     try:
-        # Open the temporary file for writing
         file_handle = open(temp_file_path, 'wb')
-        
-        # Set up protocol for receiving
         proto.expected_seq = 2  # Server will start sending data at seq=2
         proto.current_seq = 2
         
-        if verbose:
-            print("Waiting for file data from server...")
+        if verbose: print("Waiting for file data from server...")
         
         # Receive file data
         bytes_received = 0
@@ -223,8 +218,7 @@ def download_file(client_socket, addr, filename: str, protocol: str, verbose: bo
             
             return False
 
-def wait_for_fin_ack(client_socket, addr, timeout=5):
-    """Wait for FIN-ACK from server after sending FIN"""
+def wait_for_fin_ack(client_socket, addr, timeout=15):
     try:
         client_socket.settimeout(timeout)
         data, server = client_socket.recvfrom(1024)
@@ -241,7 +235,6 @@ def wait_for_fin_ack(client_socket, addr, timeout=5):
     return False
 
 def parse_arguments():
-    """Parse command line arguments"""
     parser = argparse.ArgumentParser(
         description='File transfer client for reliable data transfer protocol',
         add_help=False
@@ -264,31 +257,33 @@ def parse_arguments():
     
     return parser
 
-def main():
-    # Parse command line arguments
+def receive_args() -> tuple:
     parser = parse_arguments()
-    
-    # Handle the case where no arguments are provided
+    should_exit = False
     if len(sys.argv) == 1:
         parser.print_help()
-        return
-    
+        should_exit = True
     args = parser.parse_args()
-    
-    # Handle help flag
     if args.help:
         parser.print_help()
-        return
-    
-    # Validate command is provided
+        should_exit = True
     if not args.command:
-        print("Error: command (upload/download) is required")
+        print("Invadil set of arguments")
         parser.print_usage()
+        should_exit = True
+    return should_exit, args
+    
+    
+def main():
+    should_exit, args = receive_args()
+    if should_exit:
         return
     
-    # Set verbosity level
     verbose = args.verbose
-    quiet = args.quiet
+    quiet = not verbose
+    operation = args.command.upper()
+    filename = args.name
+    protocol = args.protocol
     
     # Validate source file for upload
     if args.command == 'upload':
@@ -299,10 +294,6 @@ def main():
             print(f"Error: source file '{args.src}' does not exist")
             return
     
-    # Set operation and filename
-    operation = args.command.upper()
-    filename = args.name
-    protocol = args.protocol
     
     # Use provided host and port, or defaults from client_config
     addr = (args.host, args.port)
@@ -315,27 +306,24 @@ def main():
         if args.command == 'upload':
             print(f"Source file: {args.src}")
     
-    # Connect to server
+    
     connection_made, client_socket = connect_server(addr)
     
     if connection_made:
-        # Send operation specification
         if send_operation_request(client_socket, addr, operation, filename, protocol):
             if operation == "UPLOAD":
-                # For upload, use the source file path
-                success = upload_file(client_socket, addr, args.src, protocol)
+                success = upload_file(client_socket, addr, args.src, protocol, verbose=verbose)
                 if success:
                     if not quiet:
                         print("Upload completed successfully")
                 else:
                     print("Upload failed")
             elif operation == "DOWNLOAD":
-                # For download, save to current directory
-                success = download_file(client_socket, addr, filename, protocol, verbose)
+                success = download_file(client_socket, addr, filename, protocol, verbose=verbose)
                 if not success and not quiet:
                     print("Download failed")
         
-        # Close connection gracefully
+        # Close connection
         if not quiet:
             print("Closing connection...")
         
@@ -345,10 +333,10 @@ def main():
         
         # Wait for FIN-ACK with short timeout
         if wait_for_fin_ack(client_socket, addr, timeout=2):
-            if verbose:
+            if not quiet:
                 print("Connection closed gracefully")
         else:
-            if verbose:
+            if not quiet:
                 print("Server didn't respond to FIN, closing anyway")
     
     client_socket.close()

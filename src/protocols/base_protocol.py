@@ -6,8 +6,9 @@ from helpers.message import RDTPacket
 class BaseRDTProtocol:
     """Clase base abstracta para protocolos RDT"""
     
-    def __init__(self, socket: socket.socket, timeout: int = 5):
+    def __init__(self, socket: socket.socket, timeout: int = 5, verbose: bool = False):
         self.socket = socket
+        self.verbose = verbose
         self.timeout = timeout
         self.socket.settimeout(timeout)
     
