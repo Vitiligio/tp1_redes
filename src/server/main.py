@@ -77,13 +77,14 @@ from protocols.stop_and_wait import StopAndWaitProtocol
 from protocols.selective_repeat import SelectiveRepeatProtocol
 
 class RDTProtocol:
-    def __init__(self, storage_dir="server_files"):
+    def __init__(self, storage_dir="server_files", verbose: bool = False):
         self.states_lock = threading.Lock()
         self.client_states = {}
-        self.file_lock_manager = FileLockManager()  # Add file locking
+        self.file_lock_manager = FileLockManager()
         self.storage_dir = storage_dir
+        self.verbose = verbose
         os.makedirs(storage_dir, exist_ok=True)
-    
+
     def _get_client_context(self, address):
         """Get or create client state with its own lock"""
         with self.states_lock:
@@ -98,7 +99,7 @@ class RDTProtocol:
                     'temp_file_path': None  # For atomic uploads
                 }
             return self.client_states[address]
-    
+
     def handle_packet(self, data, address, server_socket):
         try:
             packet = RDTPacket.from_bytes(data)
@@ -164,9 +165,9 @@ class RDTProtocol:
                 client_state['proto_name'] = protocol
                 
                 if protocol == "stop_and_wait":
-                    client_state['proto'] = StopAndWaitProtocol(server_socket)
+                    client_state['proto'] = StopAndWaitProtocol(server_socket, verbose=self.verbose)
                 elif protocol == "selective_repeat":
-                    client_state['proto'] = SelectiveRepeatProtocol(server_socket)
+                    client_state['proto'] = SelectiveRepeatProtocol(server_socket, verbose=self.verbose)
                 
                 print(f"Operation received: {operation} for file: {filename} using {protocol}")
                 
@@ -354,7 +355,7 @@ def main():
     os.makedirs(storage, exist_ok=True)
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_socket.bind((host, port))
-    rdt_protocol = RDTProtocol(storage_dir=storage)
+    rdt_protocol = RDTProtocol(storage_dir=storage, verbose=args.verbose and not args.quiet)
     if not quiet:
         print(f"RDT Server is running on {host}:{port}")
         print(f"Files will be stored in: {storage}/")
