@@ -15,7 +15,7 @@ class ReaderWriterLock:
     """A reader-writer lock that allows multiple readers or one writer"""
     def __init__(self):
         self._read_ready = threading.Condition(threading.Lock())
-        self._readers = 0  # Number of active readers
+        self._readers = 0
     
     def acquire_read(self):
         """Acquire a read lock. Multiple readers can enter."""
@@ -27,24 +27,21 @@ class ReaderWriterLock:
         with self._read_ready:
             self._readers -= 1
             if self._readers == 0:
-                self._read_ready.notify_all()  # Notify waiting writers
-    
+                self._read_ready.notify_all() 
     def acquire_write(self):
         """Acquire a write lock. Exclusive access."""
-        self._read_ready.acquire()  # Acquire the underlying condition lock
-        # Wait until there are no readers
+        self._read_ready.acquire()
         while self._readers > 0:
             self._read_ready.wait()
-        # Now we have exclusive access
     
     def release_write(self):
         """Release a write lock."""
-        self._read_ready.release()  # Release the underlying condition lock
+        self._read_ready.release()
 
 class FileLockManager:
     def __init__(self):
-        self.file_locks = {}  # filename -> ReaderWriterLock
-        self.dict_lock = threading.Lock()  # Protects the file_locks dictionary
+        self.file_locks = {}
+        self.dict_lock = threading.Lock()
     
     @contextmanager
     def read_lock(self, filename):
@@ -52,7 +49,7 @@ class FileLockManager:
         lock = self._get_lock(filename)
         lock.acquire_read()
         try:
-            yield  # Execute the read operation
+            yield
         finally:
             lock.release_read()
     
@@ -62,7 +59,7 @@ class FileLockManager:
         lock = self._get_lock(filename)
         lock.acquire_write()
         try:
-            yield  # Execute the write operation
+            yield
         finally:
             lock.release_write()
     
@@ -96,7 +93,7 @@ class RDTProtocol:
                     'current_filename': None,
                     'file_handle': None,
                     'connected': False,
-                    'temp_file_path': None  # For atomic uploads
+                    'temp_file_path': None 
                 }
             return self.client_states[address]
 
@@ -108,7 +105,6 @@ class RDTProtocol:
                 print(f"Packet from {address} failed integrity check")
                 return
             
-            # Get client context (which includes its lock)
             client_context = self._get_client_context(address)
             
             with client_context['lock']:
@@ -125,7 +121,6 @@ class RDTProtocol:
             self.handle_data(packet, address, server_socket, client_state)
         elif packet.has_flag(RDTFlags.FIN):
             self.handle_fin(packet, address, server_socket, client_state)
-            # Clean up client state
             with self.states_lock:
                 if address in self.client_states:
                     del self.client_states[address]
@@ -135,7 +130,6 @@ class RDTProtocol:
     def handle_syn(self, address, server_socket, client_state):
         print(f"SYN received from {address}")
         
-        # Send SYN-ACK
         syn_ack = create_sync_packet(0)
         syn_ack.set_flag(RDTFlags.ACK)
         server_socket.sendto(syn_ack.to_bytes(), address)
@@ -199,7 +193,6 @@ class RDTProtocol:
     def _prepare_upload(self, filename, server_socket, client_state, address):
         """Prepare for file upload with safe locking"""
         try:
-            # Create temporary file for upload (atomic operation)
             temp_file = tempfile.NamedTemporaryFile(dir=self.storage_dir, 
                                                    prefix=f".{filename}.upload.", 
                                                    delete=False)
@@ -219,7 +212,6 @@ class RDTProtocol:
         filepath = os.path.join(self.storage_dir, filename)
         
         try:
-            # Use read lock for safe concurrent downloads
             with self.file_lock_manager.read_lock(filename):
                 if not os.path.exists(filepath):
                     print(f"Requested file not found: {filepath}")
@@ -228,7 +220,6 @@ class RDTProtocol:
                     server_socket.sendto(err_msg.to_bytes(), address)
                     return False
                 
-                # Send ACK for operation packet
                 ack_packet = create_ack_packet(ack_num=1)
                 server_socket.sendto(ack_packet.to_bytes(), address)
                 
@@ -236,7 +227,6 @@ class RDTProtocol:
                     client_state['proto'].current_seq = 2
                     print(f"Starting download of {filepath} to {address}")
                     
-                    # Send file with read lock held (entire file transfer protected)
                     success = client_state['proto'].send_file(filepath, address)
                     
                     if success:
@@ -274,14 +264,12 @@ class RDTProtocol:
     def handle_fin(self, packet, address, server_socket, client_state):
         print(f"FIN received from {address}")
         
-        # Handle upload completion with safe file replacement
         if (client_state.get('current_operation') == "UPLOAD" and 
             client_state.get('file_handle') and 
             client_state.get('current_filename')):
             
             self._finalize_upload(client_state)
         
-        # Send FIN-ACK
         fin_ack = create_end_packet(0, seq_num=packet.header.sequence_number + 1)
         server_socket.sendto(fin_ack.to_bytes(), address)
         
@@ -297,26 +285,21 @@ class RDTProtocol:
             return
         
         try:
-            # Close the temporary file
             if client_state['file_handle']:
                 client_state['file_handle'].close()
             
-            # Use write lock for atomic file replacement
             with self.file_lock_manager.write_lock(filename):
                 final_path = os.path.join(self.storage_dir, filename)
                 
-                # Remove existing file if it exists
                 if os.path.exists(final_path):
                     os.remove(final_path)
                 
-                # Atomically move temporary file to final location
                 os.rename(temp_path, final_path)
                 
                 print(f"Upload completed and finalized for: {filename}")
                 
         except Exception as e:
             print(f"Error finalizing upload for {filename}: {e}")
-            # Clean up temporary file on error
             try:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
