@@ -163,7 +163,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                 self.duplicate_ack_count[ack_num] = 0
                 self.slide_send_window()
     
-    def _handle_data_packet(self, packet: RDTPacket, address: (str, int)) -> RDTPacket:
+    def _handle_data_packet(self, packet: RDTPacket, address: tuple) -> RDTPacket:
         ack_packet = create_ack_packet(packet.header.sequence_number, 0)
         try:
             self.socket.sendto(ack_packet.to_bytes(), address)
