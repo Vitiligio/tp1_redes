@@ -11,56 +11,64 @@ from protocols.stop_and_wait import StopAndWaitProtocol
 from protocols.selective_repeat import SelectiveRepeatProtocol
 
 def connect_server(addr):
-    """Establish connection with server using SYN handshake"""
+    """Establish connection with server using SYN handshake with retries"""
     connection_made = False
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client_socket.settimeout(SOCKET_TIMEOUT)
 
-    # Send SYN packet
     sync_message = create_sync_packet(0)
-    
     print(f"Attempting to connect to server at {addr}")
-    start = time.time()
-    client_socket.sendto(sync_message.to_bytes(), addr)
-    
-    try:
-        data, server = client_socket.recvfrom(1024)
-        response_packet = RDTPacket.from_bytes(data)
-        
-        if response_packet.has_flag(RDTFlags.SYN) and response_packet.has_flag(RDTFlags.ACK):
-            print("Connection established!")
-            connection_made = True
-        else:
-            print("Invalid response from server")
-            
-    except socket.timeout:
-        print('Connection request timed out')
+
+    max_attempts = 10
+    backoff_seconds = 0.6
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            client_socket.sendto(sync_message.to_bytes(), addr)
+            data, server = client_socket.recvfrom(1024)
+            response_packet = RDTPacket.from_bytes(data)
+            if response_packet.has_flag(RDTFlags.SYN) and response_packet.has_flag(RDTFlags.ACK):
+                print("Connection established!")
+                connection_made = True
+                break
+            else:
+                print("Invalid response from server")
+        except socket.timeout:
+            if attempt < max_attempts:
+                print(f"Connection request timed out (attempt {attempt}/{max_attempts}), retrying...")
+                time.sleep(backoff_seconds)
+            else:
+                print('Connection request timed out')
 
     return connection_made, client_socket
 
 def send_operation_request(client_socket, addr, operation: str, filename: str, protocol: str = "stop_and_wait"):
-    """Send operation specification (UPLOAD/DOWNLOAD + filename + protocol) with seq=1"""
+    """Send operation specification (UPLOAD/DOWNLOAD + filename + protocol) with seq=1, with retries"""
     operation_packet = create_operation_packet(seq_num=1, operation=operation, filename=filename, protocol=protocol)
-    
     print(f"Sending operation request: {operation}:{filename} using {protocol}")
-    client_socket.sendto(operation_packet.to_bytes(), addr)
-    
-    # Wait for ACK
-    try:
-        data, server = client_socket.recvfrom(1024)
-        ack_packet = RDTPacket.from_bytes(data)
-        
-        if ack_packet.verify_integrity() and ack_packet.has_flag(RDTFlags.ACK):
-            if ack_packet.header.ack_number == 1:
-                print("Operation request acknowledged by server")
-                return True
+
+    max_attempts = 10
+    backoff_seconds = 0.6
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            client_socket.sendto(operation_packet.to_bytes(), addr)
+            data, server = client_socket.recvfrom(1024)
+            ack_packet = RDTPacket.from_bytes(data)
+            if ack_packet.verify_integrity() and ack_packet.has_flag(RDTFlags.ACK):
+                if ack_packet.header.ack_number == 1:
+                    print("Operation request acknowledged by server")
+                    return True
+                else:
+                    print(f"Unexpected ACK number: {ack_packet.header.ack_number}")
             else:
-                print(f"Unexpected ACK number: {ack_packet.header.ack_number}")
-        else:
-            print("Invalid ACK received")
-    except socket.timeout:
-        print('Operation request timeout')
-    
+                print("Invalid ACK received")
+        except socket.timeout:
+            if attempt < max_attempts:
+                print(f"Operation request timeout (attempt {attempt}/{max_attempts}), retrying...")
+                time.sleep(backoff_seconds)
+            else:
+                print('Operation request timeout')
     return False
 
 def upload_file(client_socket, addr, filename: str, protocol: str, verbose: bool = False):
@@ -218,20 +226,23 @@ def download_file(client_socket, addr, filename: str, protocol: str, verbose: bo
             
             return False
 
-def wait_for_fin_ack(client_socket, addr, timeout=15):
-    try:
-        client_socket.settimeout(timeout)
-        data, server = client_socket.recvfrom(1024)
-        fin_ack_packet = RDTPacket.from_bytes(data)
-        
-        if (fin_ack_packet.has_flag(RDTFlags.FIN) and 
-            fin_ack_packet.has_flag(RDTFlags.ACK)):
-            return True
-    except socket.timeout:
-        print("Timeout waiting for FIN-ACK")
-    except Exception as e:
-        print(f"Error waiting for FIN-ACK: {e}")
-    
+def wait_for_fin_ack(client_socket, addr, timeout=3):
+    max_attempts = 10
+    for attempt in range(1, max_attempts + 1):
+        try:
+            client_socket.settimeout(timeout)
+            data, server = client_socket.recvfrom(1024)
+            fin_ack_packet = RDTPacket.from_bytes(data)
+            if (fin_ack_packet.has_flag(RDTFlags.FIN) and fin_ack_packet.has_flag(RDTFlags.ACK)):
+                return True
+        except socket.timeout:
+            if attempt < max_attempts:
+                print(f"Timeout waiting for FIN-ACK (attempt {attempt}/{max_attempts}), retrying...")
+            else:
+                print("Timeout waiting for FIN-ACK")
+        except Exception as e:
+            print(f"Error waiting for FIN-ACK: {e}")
+            break
     return False
 
 def create_upload_parser():
@@ -351,17 +362,23 @@ def upload_main():
         if not quiet:
             print("Closing connection...")
         
-        # Send FIN packet
+        # Send FIN packet with retries to ensure server finalizes temp file
+        max_fin_attempts = 5
         fin_packet = create_end_packet(ack_num=0, seq_num=100)
-        client_socket.sendto(fin_packet.to_bytes(), addr)
-        
-        # Wait for FIN-ACK with short timeout
-        if wait_for_fin_ack(client_socket, addr, timeout=2):
-            if verbose:
-                print("Connection closed gracefully")
-        else:
-            if verbose:
-                print("Server didn't respond to FIN, closing anyway")
+        fin_closed = False
+        for attempt in range(1, max_fin_attempts + 1):
+            client_socket.sendto(fin_packet.to_bytes(), addr)
+            if wait_for_fin_ack(client_socket, addr, timeout=2):
+                fin_closed = True
+                if verbose:
+                    print("Connection closed gracefully")
+                break
+            else:
+                if verbose:
+                    if attempt < max_fin_attempts:
+                        print(f"Timeout waiting for FIN-ACK (attempt {attempt}/{max_fin_attempts}), retrying...")
+                    else:
+                        print("Server didn't respond to FIN, closing anyway")
     
     client_socket.close()
 
