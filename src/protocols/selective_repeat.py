@@ -182,9 +182,9 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
     
     def _check_timeouts(self):
         current_time = time.time()
-        to_remove = []
+        to_remove: list[int] = []
         
-        for seq_num, entry in self.send_window.items():
+        for seq_num, entry in list(self.send_window.items()):
             if current_time - entry['timestamp'] > self.timeout:
                 if not self.handle_timeout(seq_num):
                     to_remove.append(seq_num)
