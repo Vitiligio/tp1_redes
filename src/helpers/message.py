@@ -5,22 +5,21 @@ from typing import Optional
 
 class RDTFlags(IntFlag):
     """Flags del protocolo RDT"""
-    SYN = 0x01      # Sincronización
-    ACK = 0x02      # Acuse de recibo  
-    FIN = 0x04      # Finalización
-    DATA = 0x08     # Datos
-    ERR = 0x10      # Error
+    SYN = 0x01
+    ACK = 0x02
+    FIN = 0x04
+    DATA = 0x08
+    ERR = 0x10
 
 class RDTHeader:
     """
-    Improved RDT Header (12 bytes - more efficient)
-    0-3: sequence_number (uint32)
-    4-7: ack_number (uint32) 
-    8-9: flags (uint16)
-    10-11: data_length (uint16)
+    0-3: sequence_number 
+    4-7: ack_number 
+    8-9: flags 
+    10-11: data_length 
     """
     
-    FORMAT = '!IIHH'  # 4+4+2+2 = 12 bytes (more efficient)
+    FORMAT = '!IIHH'
     SIZE = struct.calcsize(FORMAT)
     
     def __init__(self, 
@@ -47,7 +46,7 @@ class RDTHeader:
         return cls(*struct.unpack(cls.FORMAT, data[:cls.SIZE]))
 
 class RDTPacket:
-    MAX_PAYLOAD_SIZE = 1024  # 1KB por paquete
+    MAX_PAYLOAD_SIZE = 1024
     
     def __init__(self, header: RDTHeader, payload: bytes = b''):
         self.header = header
@@ -62,19 +61,18 @@ class RDTPacket:
     @classmethod
     def from_bytes(cls, data: bytes) -> 'RDTPacket':
         """Deserializa verificando integridad"""
-        if len(data) < RDTHeader.SIZE + 32:  # header + MD5 hash (32 chars hex)
+        if len(data) < RDTHeader.SIZE + 32:
             raise ValueError("Datos insuficientes para formar paquete")
         
         header = RDTHeader.from_bytes(data)
         payload_end = RDTHeader.SIZE + header.data_length
         payload = data[RDTHeader.SIZE:payload_end]
         
-        # Verificar checksum (últimos 32 bytes son el hash MD5)
-        expected_hash = data[-32:]  # Los últimos 32 bytes del paquete completo
+        expected_hash = data[-32:]
         actual_hash = cls._calculate_payload_hash(payload)
         
         packet = cls(header, payload)
-        packet._stored_hash = expected_hash  # Guardar para verificación
+        packet._stored_hash = expected_hash
         
         return packet
     
@@ -134,13 +132,11 @@ def parse_error_packet(packet: RDTPacket) -> tuple:
     return None, None, None
 
 def create_operation_packet(seq_num: int, operation: str, filename: str, protocol: str = "stop_and_wait") -> RDTPacket:
-    """Create packet for operation specification (UPLOAD/DOWNLOAD + filename + protocol)"""
     operation_data = f"{operation}:{filename}:{protocol}".encode('utf-8')
     header = RDTHeader(sequence_number=seq_num, flags=RDTFlags.DATA)
     return RDTPacket(header, operation_data)
 
 def parse_operation_packet(packet: RDTPacket) -> tuple:
-    """Parse operation packet into (operation, filename, protocol)"""
     if packet.payload:
         data_str = packet.payload.decode('utf-8')
         if ':' in data_str:

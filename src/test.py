@@ -99,7 +99,7 @@ def setup_concurrency_test():
     # Wait longer for server to initialize and verify it's ready
     logger.info("Waiting for server to initialize...")
     server_ready = False
-    max_wait = 20  # Maximum 20 seconds
+    max_wait = 20
     wait_interval = 1
     
     for i in range(max_wait):
@@ -195,7 +195,7 @@ def setup_concurrency_test():
     # Wait for Client 1 to establish connection before starting Client 2
     logger.info("Waiting for Client 1 to establish connection...")
     client1_connected = False
-    for i in range(10):  # Wait up to 10 seconds
+    for i in range(10):
         time.sleep(1)
         # Check if client1 is still running (indicates it's working)
         if client1_proc.poll() is None:
@@ -223,8 +223,8 @@ def setup_concurrency_test():
 
     # Monitor both clients with detailed logging
     logger.info("Monitoring both clients for completion...")
-    max_wait_time = 180  # Increased timeout
-    check_interval = 3   # More frequent checks
+    max_wait_time = 180
+    check_interval = 3
     elapsed_time = 0
     
     while elapsed_time < max_wait_time:
@@ -241,7 +241,7 @@ def setup_concurrency_test():
             logger.info(f"Progress: {running_count}/2 clients running ({remaining_time}s remaining)")
             
             # Check client logs for progress
-            if elapsed_time % 6 == 0:  # Every 18 seconds
+            if elapsed_time % 6 == 0:
                 client1_log_tail = client1.cmd(f'tail -3 {client1_log} 2>/dev/null')
                 client2_log_tail = client2.cmd(f'tail -3 {client2_log} 2>/dev/null')
                 

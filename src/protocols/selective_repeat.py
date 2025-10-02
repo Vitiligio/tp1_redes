@@ -154,11 +154,11 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
         ack_num = packet.header.ack_number
         if self.verbose: print(f"Received ACK {ack_num}")
         if ack_num in self.ack_received:
-            if self.ack_received[ack_num]:  # Duplicate ACK!
+            if self.ack_received[ack_num]:
                 self.duplicate_ack_count[ack_num] = self.duplicate_ack_count.get(ack_num, 0) + 1
                 if self.duplicate_ack_count[ack_num] >= 3:
                     self._fast_retransmit(ack_num)
-            else:  # New ACK
+            else:
                 self.ack_received[ack_num] = True
                 self.duplicate_ack_count[ack_num] = 0
                 self.slide_send_window()
