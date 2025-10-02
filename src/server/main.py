@@ -171,6 +171,14 @@ class RDTProtocol:
                 elif operation == "DOWNLOAD":
                     if not self._prepare_download(filename, server_socket, client_state, address):
                         return
+            ack_packet = create_ack_packet(ack_num=seq_num)
+            server_socket.sendto(ack_packet.to_bytes(), address)
+            client_state['expected_seq'] = 2  
+            return
+    
+        if seq_num < 2:
+            print(f"Unexpected sequence number for file data: {seq_num}")
+            return
                     
         proto = client_state.get('proto')
         if proto is None:

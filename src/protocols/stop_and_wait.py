@@ -37,7 +37,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
             if not packet.verify_integrity():
                 if self.verbose: print(f"Packet from {address} failed integrity check")
                 return None
-            
+            # esto puede traer problemas con perdida de paquetes
             if packet.has_flag(RDTFlags.ACK):
                 if packet.header.ack_number == self.current_seq:
                     self.current_seq = (self.current_seq + 1) % 65536
