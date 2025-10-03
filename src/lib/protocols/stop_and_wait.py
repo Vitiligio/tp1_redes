@@ -17,9 +17,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
         self.retries = 0
 
     def send_packet(self, packet: RDTPacket, address: (str, int)) -> bool:
-        # Don't modify sequence number here - it should be set by caller
         packet.header.ack_number = 0
-        
         try:
             print(f"DEBUG CLIENT: Actually sending packet seq={packet.header.sequence_number}")
             self.socket.sendto(packet.to_bytes(), address)
@@ -30,7 +28,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
             if self.verbose: print(f"Error enviando paquete {e}")
             return False
 
-    def receive_packet(self) -> RDTPacket:  # Remove expected_seq parameter
+    def receive_packet(self) -> RDTPacket:
         try:
             data, address = self.socket.recvfrom(1024)
             packet = RDTPacket.from_bytes(data)
@@ -40,31 +38,23 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                 return None
             
             if packet.has_flag(RDTFlags.ACK):
-                print(f"DEBUG CLIENT: Received ACK={packet.header.ack_number}, current_seq={self.current_seq}, will become {(self.current_seq + 1) % 2}")
-                # Only accept ACK for current sequence
-                if packet.header.ack_number == self.current_seq:
-                    if self.verbose: print(f"ACK correcto recibido para seq: {self.current_seq}")
-                    self.current_seq = (self.current_seq + 1) % 65536
-                    self.retries = 0
-                    self.last_sent_packet = None
-                    self.last_sent_address = None
-                else:
-                    if self.verbose: print(f"ACK duplicado o fuera de secuencia. Esperado: {self.current_seq}, Recibido: {packet.header.ack_number}")
+                print(f"DEBUG CLIENT: Received ACK={packet.header.ack_number}, current_seq={self.current_seq}")
                 return packet
             elif packet.has_flag(RDTFlags.DATA):
-                # Handle DATA packets - only accept expected sequence
+                print(f"DEBUG CLIENT: Received seq={packet.header.sequence_number}, current_seq={self.current_seq}, will become {(self.current_seq + 1) % 2}")
                 if packet.header.sequence_number == self.expected_seq:
                     ack_packet = create_ack_packet(packet.header.sequence_number, 0)
                     self.socket.sendto(ack_packet.to_bytes(), address)
-                    self.expected_seq = (self.expected_seq + 1) % 65536
+                    self.expected_seq = (self.expected_seq + 1) % 2
                     if self.verbose: print(f"DATA aceptado, seq: {packet.header.sequence_number}, nuevo expected_seq: {self.expected_seq}")
                 else:
-                    # Send ACK for last correctly received packet
-                    ack_packet = create_ack_packet(self.expected_seq - 1, 0)
+                    ack_packet = create_ack_packet((self.expected_seq - 1) % 2, 0)
                     self.socket.sendto(ack_packet.to_bytes(), address)
                     if self.verbose: print(f"DATA fuera de secuencia. Esperado: {self.expected_seq}, Recibido: {packet.header.sequence_number}")
                 return packet
             else:
+                print(f"DEBUG CLIENT: QUE ONDA NO TENGO NINGUN FLAG")
+
                 return packet
                 
         except socket.timeout:
@@ -82,7 +72,6 @@ class StopAndWaitProtocol(BaseRDTProtocol):
             return False
         
         try:
-            # Resend the exact same packet (same sequence number)
             self.socket.sendto(self.last_sent_packet.to_bytes(), self.last_sent_address)
             self.retries += 1
             if self.verbose: print(f"Reintento {self.retries} para seq: {seq_num}")
@@ -105,7 +94,6 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                     if not chunk:
                         break
                     print(f"DEBUG CLIENT: Sending chunk with seq={self.current_seq}, file_pos={file.tell()}")
-                    # Create packet with current sequence number (0 or 1)
                     packet = create_data_packet(self.current_seq, chunk)
                     
                     while True:
@@ -119,16 +107,14 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                                     if received_packet.header.ack_number == self.current_seq:
                                         if self.verbose: print(f"Recibido ACK correcto para seq={self.current_seq}")
                                         ack_received = True
-                                        # Toggle sequence number: 0->1, 1->0
                                         self.current_seq = (self.current_seq + 1) % 2
                                         break
                                     else:
                                         if self.verbose: print(f"ACK inesperado. Esperado: {self.current_seq}, recibido: {received_packet.header.ack_number}")
                             
                             if ack_received:
-                                break  # Move to next chunk
+                                break
                             else:
-                                # Timeout - resend same packet with same sequence number
                                 if not self.handle_timeout(self.current_seq):
                                     if self.verbose: print(f"Fallo max reintentos para seq: {self.current_seq}")
                                     return False
@@ -141,16 +127,14 @@ class StopAndWaitProtocol(BaseRDTProtocol):
             return False
         
     def on_data(self, packet: RDTPacket):
-        # Only accept data with expected sequence number
         if packet.header.sequence_number == self.expected_seq:
             ack_num = packet.header.sequence_number
             data_to_write = packet.payload
-            self.expected_seq = (self.expected_seq + 1) % 65536
+            self.expected_seq = (self.expected_seq + 1) % 2
             if self.verbose: print(f"DATA aceptado, seq: {packet.header.sequence_number}, nuevo expected_seq: {self.expected_seq}")
             return ack_num, data_to_write, self.expected_seq
         else:
-            # Send ACK for last correctly received packet
-            prev_seq = self.expected_seq - 1 if self.expected_seq > 0 else 0
+            prev_seq = (self.expected_seq - 1) % 2
             if self.verbose: print(f"DATA rechazado - fuera de secuencia. Esperado: {self.expected_seq}, Recibido: {packet.header.sequence_number}")
             return prev_seq, b"", self.expected_seq
 
@@ -162,7 +146,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
         if packet.header.ack_number == self.current_seq:
             if self.verbose: 
                 print(f"ACK correcto recibido para seq: {self.current_seq}")
-            self.current_seq = (self.current_seq + 1) % 65536
+            self.current_seq = (self.current_seq + 1) % 2
             self.retries = 0
             self.last_sent_packet = None
             self.last_sent_address = None
