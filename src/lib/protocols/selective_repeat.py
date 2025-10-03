@@ -9,7 +9,11 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                  window_size: int = 8, verbose: bool = False):
         super().__init__(socket, timeout)
         self.max_retries = max_retries
+        
+        if window_size > 32768:  # 65536 / 2
+            raise ValueError("Window size must be at most 32768 for 16-bit sequence numbers")
         self.window_size = window_size
+        
         self.verbose = verbose
         self.current_seq = 0
         self.expected_seq = 0
@@ -28,6 +32,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
         
         try:
             self.socket.sendto(packet.to_bytes(), address)
+            # Only increment sequence number after successful buffering:cite[6]
             self.send_window[seq_num] = {
                 'packet': packet,
                 'address': address,
@@ -35,13 +40,14 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                 'retries': 0
             }
             self.ack_received[seq_num] = False
-            self.current_seq = (self.current_seq + 1) % 65536
+            self.duplicate_ack_count[seq_num] = 0
+            self.current_seq = (self.current_seq + 1) % 65536  # Now increment
             return True
         except Exception as e:
             if self.verbose: print(f"Error {e}")
             return False
     
-    def receive_packet(self, expected_seq: int = None) -> RDTPacket:
+    def receive_packet(self) -> RDTPacket:  # Remove expected_seq parameter
         try:
             data, address = self.socket.recvfrom(1024)
             packet = RDTPacket.from_bytes(data)
@@ -60,6 +66,29 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
             if self.verbose: print(f"Error {e}")
             return None
     
+    def _fast_retransmit(self, seq_num: int):
+        """Immediate retransmission on 3 duplicate ACKs:cite[8]"""
+        if seq_num in self.send_window:
+            window_entry = self.send_window[seq_num]
+            if window_entry['retries'] < self.max_retries:
+                try:
+                    self.socket.sendto(window_entry['packet'].to_bytes(), window_entry['address'])
+                    window_entry['retries'] += 1
+                    window_entry['timestamp'] = time.time()
+                    if self.verbose: print(f"Fast retransmit packet {seq_num}")
+                except Exception as e:
+                    if self.verbose: print(f"Error in fast retransmit: {e}")
+    
+    def _check_timeouts(self):
+        """Check for timed out packets and retransmit"""
+        current_time = time.time()
+        
+        for seq_num, entry in list(self.send_window.items()):
+            if not self.ack_received.get(seq_num, False):
+                if current_time - entry['timestamp'] > self.timeout:
+                    if self.verbose: print(f"Timeout for packet {seq_num}")
+                    self.handle_timeout(seq_num)
+
     def handle_timeout(self, seq_num: int) -> bool:
         if seq_num not in self.send_window:
             return False
@@ -92,19 +121,33 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
         try:
             with open(file_path, 'rb') as file:
                 eof_reached = False
+                base_seq = self.current_seq  # Track starting sequence for this file
+                
                 while not eof_reached or len(self.send_window) > 0:
+                    # Fill sending window
                     while not eof_reached and len(self.send_window) < self.window_size:
                         chunk = file.read(1024)
                         if not chunk:
                             eof_reached = True
                             break
-                        packet = create_data_packet(0, chunk)
+                        packet = create_data_packet(0, chunk)  # seq will be set in send_packet
                         if not self.send_packet(packet, address):
-                            break
-                    pkt = self.receive_packet()
-                    if pkt is None:
-                        self._check_timeouts()
-                        time.sleep(0.005)
+                            break  # Window full
+                    
+                    # Non-blocking check for ACKs
+                    self.socket.settimeout(0.01)  # Short timeout for responsiveness:cite[2]
+                    try:
+                        pkt = self.receive_packet()
+                    except socket.timeout:
+                        pkt = None
+                    
+                    # Check for timeouts on sent packets
+                    self._check_timeouts()
+                    
+                    # Small delay to prevent CPU spinning
+                    if not pkt and len(self.send_window) > 0:
+                        time.sleep(0.001)
+                
                 return True
         except Exception as e:
             if self.verbose: print(f"Error {e}")
@@ -133,16 +176,18 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
             return False
     
     def slide_send_window(self):
-        to_remove = []
-        for seq_num in list(self.send_window.keys()):
-            if self.ack_received.get(seq_num, False):
-                to_remove.append(seq_num)
+        """Slide window to remove acknowledged packets from the beginning"""
+        # Remove all consecutive acknowledged packets from the start
+        min_seq = min(self.send_window.keys()) if self.send_window else 0
         
-        for seq_num in to_remove:
-            del self.send_window[seq_num]
-            del self.ack_received[seq_num]
-            if seq_num in self.duplicate_ack_count:
-                del self.duplicate_ack_count[seq_num]
+        while min_seq in self.ack_received and self.ack_received.get(min_seq, False):
+            if min_seq in self.send_window:
+                del self.send_window[min_seq]
+            if min_seq in self.ack_received:
+                del self.ack_received[min_seq]
+            if min_seq in self.duplicate_ack_count:
+                del self.duplicate_ack_count[min_seq]
+            min_seq = (min_seq + 1) % 65536
     
     def slide_receive_window(self):
         while self.expected_seq in self.receive_window:
@@ -153,14 +198,19 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
     def _handle_ack(self, packet: RDTPacket):
         ack_num = packet.header.ack_number
         if self.verbose: print(f"ACK recibido: {ack_num}")
+        
         if ack_num in self.ack_received:
             if self.ack_received[ack_num]:
+                # Duplicate ACK - count for fast retransmit:cite[8]
                 self.duplicate_ack_count[ack_num] = self.duplicate_ack_count.get(ack_num, 0) + 1
                 if self.duplicate_ack_count[ack_num] >= 3:
+                    if self.verbose: print(f"Fast retransmit triggered for packet {ack_num}")
                     self._fast_retransmit(ack_num)
             else:
+                # First ACK for this packet
                 self.ack_received[ack_num] = True
                 self.duplicate_ack_count[ack_num] = 0
+                # Slide window to remove acknowledged packets
                 self.slide_send_window()
     
     def _handle_data_packet(self, packet: RDTPacket, address: tuple) -> RDTPacket:

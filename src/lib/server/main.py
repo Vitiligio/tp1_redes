@@ -89,19 +89,25 @@ class RDTProtocol:
 
     def handle_packet(self, data, address, server_socket):
         try:
-            packet = RDTPacket.from_bytes(data)
+            print(f"Received {len(data)} bytes from {address}")
             
-            if not packet.verify_integrity():
-                print(f"PAquete fallo verify_integrity")
-                return
+            packet = RDTPacket.from_bytes(data)
+            if packet is None:
+                print(f"ERROR: Failed to parse packet from {address}. Data may be corrupted.")
+                return  # Critical: Exit if packet parsing fails
+            
+            print(f"DEBUG: Packet parsed successfully. Flags: {packet.header.flags}, Seq: {packet.header.sequence_number}")
             
             client_context = self._get_client_context(address)
             
-            with client_context['lock']:
+            with client_context['lock']:    
+                print("Processing packet for client")
                 self._process_packet_for_client(packet, address, server_socket, client_context)
-                
+            
         except Exception as e:
-            print(f"Error procesando paquete desde {address}: {e}")
+            print(f"ERROR: Exception processing packet from {address}: {e}")
+            import traceback
+            traceback.print_exc()  # This will show the full stack trace
     
     def _process_packet_for_client(self, packet, address, server_socket, client_state):
         if packet.has_flag(RDTFlags.SYN):
@@ -149,8 +155,12 @@ class RDTProtocol:
                 
                 if protocol == "stop_and_wait":
                     client_state['proto'] = StopAndWaitProtocol(server_socket, verbose=self.verbose)
+                    # For Stop-and-Wait, expect file data to start at sequence 0
+                    client_state['expected_seq'] = 0
                 elif protocol == "selective_repeat":
                     client_state['proto'] = SelectiveRepeatProtocol(server_socket, verbose=self.verbose)
+                    # For Selective Repeat, keep expecting sequence 2
+                    client_state['expected_seq'] = 2
                 
                 if self.verbose:
                     print(f"Operación {operation}. Archivo: {filename}. Protocolo: {protocol}")
@@ -163,12 +173,17 @@ class RDTProtocol:
                         return
         
             ack_packet = create_ack_packet(ack_num=seq_num)
+            print(f"DEBUG SERVER: Processing packet seq={seq_num}, expected_seq={expected_seq}, client_state_seq={client_state['expected_seq']}")
             server_socket.sendto(ack_packet.to_bytes(), address)
-            client_state['expected_seq'] = 2  
+            # Remove the generic client_state['expected_seq'] = 2 here
             return
-    
-        if seq_num < 2:
-            print(f"Seq inesperado: {seq_num}")
+
+        # Remove the generic seq_num < 2 check and make it protocol-specific
+        if client_state['proto_name'] == "stop_and_wait" and seq_num not in [0, 1]:
+            print(f"Seq inesperado para Stop-and-Wait: {seq_num}")
+            return
+        elif client_state['proto_name'] == "selective_repeat" and seq_num < 2:
+            print(f"Seq inesperado para Selective Repeat: {seq_num}")
             return
                     
         proto = client_state.get('proto')
@@ -225,7 +240,6 @@ class RDTProtocol:
                 server_socket.sendto(ack_packet.to_bytes(), address)
                 
                 if client_state['proto'] is not None:
-                    client_state['proto'].current_seq = 2
                     print(f"Empezando descarga de {filepath}")
                     
                     success = client_state['proto'].send_file(filepath, address)

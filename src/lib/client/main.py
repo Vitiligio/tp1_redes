@@ -40,6 +40,7 @@ def connect_server(addr):
     return connection_made, client_socket
 
 def send_operation_request(client_socket, addr, operation: str, filename: str, protocol: str = "stop_and_wait"):
+    # Change from seq_num=0 to seq_num=1
     operation_packet = create_operation_packet(seq_num=1, operation=operation, filename=filename, protocol=protocol)
     print(f"Enviando operacion: {operation}. Archivo: {filename}. Protocolo: {protocol}")
 
@@ -51,7 +52,7 @@ def send_operation_request(client_socket, addr, operation: str, filename: str, p
             data, server = client_socket.recvfrom(1024)
             ack_packet = RDTPacket.from_bytes(data)
             if ack_packet.verify_integrity() and ack_packet.has_flag(RDTFlags.ACK):
-                if ack_packet.header.ack_number == 1:
+                if ack_packet.header.ack_number == 1:  # Also expecting ACK for sequence 1
                     print("Operación ACKeada por servidor")
                     return True
                 else:
@@ -68,23 +69,30 @@ def send_operation_request(client_socket, addr, operation: str, filename: str, p
 def upload_file(client_socket, addr, filename: str, protocol: str, verbose: bool = False):
     if protocol == "stop_and_wait":
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT, verbose=verbose)
+        # For Stop-and-Wait, start file data at sequence 0
+        proto.current_seq = 0
     elif protocol == "selective_repeat":
+        proto.current_seq = 2
         proto = SelectiveRepeatProtocol(client_socket, timeout=SOCKET_TIMEOUT, verbose=verbose)
+        # Selective Repeat manages its own sequence numbers internally
     else:
         if verbose: print(f"Protocolo no reconocido: {protocol}. Usando default stop_and_wait")
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT, verbose=verbose)
+        proto.current_seq = 0
     
-    proto.current_seq = 2
     return proto.send_file(filename, addr)
 
 def download_file(client_socket, addr, filename: str, protocol: str, verbose: bool = False):
     if protocol == "stop_and_wait":
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT)
+        proto.expected_seq = 0  # For Stop-and-Wait, expect file data to start at sequence 0
     elif protocol == "selective_repeat":
         proto = SelectiveRepeatProtocol(client_socket, timeout=SOCKET_TIMEOUT)
+        proto.expected_seq = 2  # For Selective Repeat, keep expecting sequence 2
     else:
         if verbose: print(f"Pootocolo no reconocido: {protocol}. Usando default stop_and_wait")
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT)
+        proto.expected_seq = 0
     
     print(f"Descargando: {filename} usando protocolo {protocol}")
     
@@ -103,8 +111,9 @@ def download_file(client_socket, addr, filename: str, protocol: str, verbose: bo
     
     try:
         file_handle = open(temp_file_path, 'wb')
+        # REMOVED: Manual sequence number settings - Protocols handle this internally
         proto.expected_seq = 2
-        proto.current_seq = 2
+        # proto.current_seq = 2
         
         if verbose: print("Esperando data del server")
         
@@ -129,7 +138,7 @@ def download_file(client_socket, addr, filename: str, protocol: str, verbose: bo
                         
                         ack_packet = create_ack_packet(ack_num=ack_num)
                         client_socket.sendto(ack_packet.to_bytes(), addr)
-                        proto.expected_seq = new_expected
+                        # proto.expected_seq = new_expected  # REMOVED - Protocol manages this internally
                         
                     elif packet.has_flag(RDTFlags.FIN):
                         if verbose:
