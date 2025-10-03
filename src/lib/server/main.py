@@ -284,6 +284,7 @@ class RDTProtocol:
             self._finalize_upload(client_state)
         
         fin_ack = create_end_packet(0, seq_num=packet.header.sequence_number + 1)
+        fin_ack.set_flag(RDTFlags.ACK)
         server_socket.sendto(fin_ack.to_bytes(), address)
         
         print(f"Conexión cerrada con {address}")
