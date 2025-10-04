@@ -15,7 +15,6 @@ class StopAndWaitProtocol(BaseRDTProtocol):
         self.last_sent_packet = None
         self.last_sent_address = None
         self.retries = 0
-        # Support for external ACK handling (e.g., server loop handles ACKs)
         self._pending_ack_for_current = False
         self.external_ack_handling = False
 
@@ -115,7 +114,6 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                                 if received_packet and received_packet.has_flag(RDTFlags.ACK):
                                     if received_packet.header.ack_number == self.current_seq:
                                         if self.verbose: print(f"Recibido ACK correcto para seq={self.current_seq}")
-                                        # Mark as received and let outer block advance seq
                                         self._pending_ack_for_current = True
                                         ack_received = True
                                         break
@@ -123,7 +121,6 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                                         if self.verbose: print(f"ACK inesperado. Esperado: {self.current_seq}, recibido: {received_packet.header.ack_number}")
                             
                             if ack_received:
-                                # Advance once here, regardless of how ACK was received
                                 self._pending_ack_for_current = False
                                 self.current_seq = (self.current_seq + 1) % 2
                                 self.retries = 0
@@ -162,7 +159,6 @@ class StopAndWaitProtocol(BaseRDTProtocol):
         if packet.header.ack_number == self.current_seq:
             if self.verbose: 
                 print(f"ACK correcto recibido para seq: {self.current_seq}")
-            # Defer advancing to the send loop to avoid double increments
             self._pending_ack_for_current = True
             self.retries = 0
             return True

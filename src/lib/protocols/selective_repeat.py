@@ -18,7 +18,6 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
         self.receive_window = {}
         self.ack_received = {}
         self.duplicate_ack_count = {}
-        # When True, do not call recvfrom in send loop; rely on on_ack invoked externally
         self.external_ack_handling = False
     
     def send_packet(self, packet: RDTPacket, address: tuple) -> bool:
@@ -122,7 +121,6 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                 base_seq = self.current_seq
                 
                 while not eof_reached or len(self.send_window) > 0:
-                    # Fill sending window
                     while not eof_reached and len(self.send_window) < self.window_size:
                         chunk = file.read(1024)
                         if not chunk:
@@ -131,9 +129,7 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                         packet = create_data_packet(0, chunk) 
                         if not self.send_packet(packet, address):
                             break
-                    # Process ACKs
                     if self.external_ack_handling:
-                        # ACKs will arrive via on_ack() from the server loop
                         self._check_timeouts()
                         if len(self.send_window) > 0:
                             time.sleep(0.001)
@@ -146,7 +142,6 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                         
                         self._check_timeouts()
                         
-                        # Small delay to prevent CPU spinning
                         if not pkt and len(self.send_window) > 0:
                             time.sleep(0.001)
                 

@@ -89,25 +89,23 @@ class RDTProtocol:
 
     def handle_packet(self, data, address, server_socket):
         try:
-            print(f"Received {len(data)} bytes from {address}")
+            print(f"Recibo paquete")
             
             packet = RDTPacket.from_bytes(data)
             if packet is None:
-                print(f"ERROR: Failed to parse packet from {address}. Data may be corrupted.")
-                return  # Critical: Exit if packet parsing fails
+                print(f"ERROR")
+                return 
             
-            print(f"DEBUG: Packet parsed successfully. Flags: {packet.header.flags}, Seq: {packet.header.sequence_number}")
+            print(f"Paquete parseado. Flags: {packet.header.flags}, Seq: {packet.header.sequence_number}")
             
             client_context = self._get_client_context(address)
             
             with client_context['lock']:    
-                print("Processing packet for client")
+                print("Proceso paquete")
                 self._process_packet_for_client(packet, address, server_socket, client_context)
             
         except Exception as e:
-            print(f"ERROR: Exception processing packet from {address}: {e}")
-            import traceback
-            traceback.print_exc()  # This will show the full stack trace
+            print(f"ERROR: Excepcion procesando paquete: {e}")
     
     def _process_packet_for_client(self, packet, address, server_socket, client_state):
         if packet.has_flag(RDTFlags.SYN):
@@ -123,7 +121,7 @@ class RDTProtocol:
             self.handle_ack(packet, address, client_state, server_socket)
     
     def handle_syn(self, address, server_socket, client_state):
-        print(f"SYN received from {address}")
+        print(f"SYN recibido desde {address}")
         
         syn_ack = create_sync_packet(0)
         syn_ack.set_flag(RDTFlags.ACK)
@@ -155,17 +153,12 @@ class RDTProtocol:
                 
                 if protocol == "stop_and_wait":
                     client_state['proto'] = StopAndWaitProtocol(server_socket, verbose=self.verbose)
-                    # For Stop-and-Wait, expect file data to start at sequence 0
                     client_state['expected_seq'] = 0
-                    # If server later acts as sender (DOWNLOAD), allow external ACK handling
                     client_state['proto'].external_ack_handling = True
-                    # Start sender seq at 0
                     client_state['proto'].current_seq = 0
                 elif protocol == "selective_repeat":
                     client_state['proto'] = SelectiveRepeatProtocol(server_socket, verbose=self.verbose)
-                    # For Selective Repeat, keep expecting sequence 2
                     client_state['expected_seq'] = 2
-                    # Start sender seq at 2 so receiver expects >=2
                     client_state['proto'].current_seq = 2
                     client_state['proto'].external_ack_handling = True
                 
@@ -180,12 +173,10 @@ class RDTProtocol:
                         return
         
             ack_packet = create_ack_packet(ack_num=seq_num)
-            print(f"DEBUG SERVER: Processing packet seq={seq_num}, expected_seq={expected_seq}, client_state_seq={client_state['expected_seq']}")
+            print(f"DEBUG SERVER: Proceso paquete. seq={seq_num}, expected_seq={expected_seq}, client_state_seq={client_state['expected_seq']}")
             server_socket.sendto(ack_packet.to_bytes(), address)
-            # Remove the generic client_state['expected_seq'] = 2 here
             return
 
-        # Remove the generic seq_num < 2 check and make it protocol-specific
         if client_state['proto_name'] == "stop_and_wait" and seq_num not in [0, 1]:
             print(f"Seq inesperado para Stop-and-Wait: {seq_num}")
             return
@@ -247,7 +238,6 @@ class RDTProtocol:
                 server_socket.sendto(ack_packet.to_bytes(), address)
                 print(f"Operación DOWNLOAD. Archivo: {filename}. Protocolo: {client_state['protocol']}")
                 
-                # Mark that we're ready to start sending, but wait for client to be ready
                 client_state['download_ready'] = True
                 return True
                 
@@ -316,7 +306,6 @@ class RDTProtocol:
     def handle_ack(self, packet, address, client_state, server_socket):
         print(f"ACK recibido desde: {address}, seq={packet.header.ack_number}")
         
-        # Check if this is the client confirming they're ready for DOWNLOAD
         if (packet.header.ack_number == 1 and 
             client_state.get('download_ready') and 
             not client_state.get('download_started')):
@@ -324,7 +313,6 @@ class RDTProtocol:
             print(f"Cliente listo para DOWNLOAD. Iniciando envío de {client_state['current_filename']}")
             client_state['download_started'] = True
             
-            # Start the download thread now that client is ready
             def _send_job():
                 try:
                     proto = client_state['proto']

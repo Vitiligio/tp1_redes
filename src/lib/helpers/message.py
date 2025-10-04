@@ -56,7 +56,6 @@ class RDTPacket:
     
     def calculate_checksum(self) -> int:
         """Calculate checksum for packet integrity verification"""
-        # Include header fields and payload in checksum calculation
         checksum_data = (
             self.header.sequence_number.to_bytes(4, 'big') +
             self.header.ack_number.to_bytes(4, 'big') +
@@ -67,15 +66,13 @@ class RDTPacket:
     
     def to_bytes(self) -> bytes:
         """Convert packet to bytes with checksum"""
-        # Calculate checksum before serialization
         checksum = self.calculate_checksum()
         
-        # Include checksum in the serialized data
         packet_data = (
             self.header.sequence_number.to_bytes(4, 'big') +
             self.header.ack_number.to_bytes(4, 'big') +
             self.header.flags.to_bytes(2, 'big') +
-            checksum.to_bytes(4, 'big') +  # 4-byte checksum
+            checksum.to_bytes(4, 'big') + 
             len(self.payload).to_bytes(2, 'big') +
             self.payload
         )
@@ -85,35 +82,30 @@ class RDTPacket:
     def from_bytes(cls, data: bytes) -> Optional['RDTPacket']:
         """Create packet from bytes with checksum verification"""
         try:
-            if len(data) < 16:  # Minimum packet size with checksum
+            if len(data) < 16: 
                 return None
                 
-            # Parse header fields
             seq_num = int.from_bytes(data[0:4], 'big')
             ack_num = int.from_bytes(data[4:8], 'big')
             flags = int.from_bytes(data[8:10], 'big')
             received_checksum = int.from_bytes(data[10:14], 'big')
             payload_len = int.from_bytes(data[14:16], 'big')
             
-            # Extract payload
             if len(data) < 16 + payload_len:
                 return None
             payload = data[16:16 + payload_len]
             
-            # Create temporary packet for checksum verification
             temp_packet = cls()
             temp_packet.header.sequence_number = seq_num
             temp_packet.header.ack_number = ack_num
             temp_packet.header.flags = flags
             temp_packet.payload = payload
             
-            # Verify checksum
             calculated_checksum = temp_packet.calculate_checksum()
             if calculated_checksum != received_checksum:
                 print(f"Checksum error: calculated {calculated_checksum}, received {received_checksum}")
                 return None
             
-            # Create final packet if checksum matches
             packet = cls()
             packet.header.sequence_number = seq_num
             packet.header.ack_number = ack_num
@@ -143,7 +135,7 @@ class RDTPacket:
         Note: This is a simplified version since checksum verification
         is already handled in from_bytes().
         """
-        return True  # Integrity already verified in from_bytes
+        return True
 
 def create_data_packet(seq_num: int, payload: bytes) -> RDTPacket:
     packet = RDTPacket()
@@ -197,7 +189,7 @@ def create_operation_packet(seq_num: int, operation: str, filename: str, protoco
     operation_data = f"{operation}:{filename}:{protocol}".encode('utf-8')
     packet = RDTPacket(operation_data)
     packet.header.sequence_number = seq_num
-    packet.set_flag(RDTFlags.DATA)  # Set the DATA flag
+    packet.set_flag(RDTFlags.DATA)
     return packet
 
 def parse_operation_packet(packet: RDTPacket) -> tuple:

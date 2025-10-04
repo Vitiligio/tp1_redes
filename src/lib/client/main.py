@@ -71,12 +71,10 @@ def send_operation_request(client_socket, addr, operation: str, filename: str, p
 def upload_file(client_socket, addr, filename: str, protocol: str, verbose: bool = False):
     if protocol == "stop_and_wait":
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT, verbose=verbose)
-        # For Stop-and-Wait, start file data at sequence 0
         proto.current_seq = 0
     elif protocol == "selective_repeat":
         proto = SelectiveRepeatProtocol(client_socket, timeout=SOCKET_TIMEOUT, verbose=verbose)
         proto.current_seq = 2
-        # Selective Repeat manages its own sequence numbers internally
     else:
         if verbose: print(f"Protocolo no reconocido: {protocol}. Usando default stop_and_wait")
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT, verbose=verbose)
@@ -87,10 +85,10 @@ def upload_file(client_socket, addr, filename: str, protocol: str, verbose: bool
 def download_file(client_socket, addr, filename: str, protocol: str, verbose: bool = False):
     if protocol == "stop_and_wait":
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT)
-        proto.expected_seq = 0  # For Stop-and-Wait, expect file data to start at sequence 0
+        proto.expected_seq = 0 
     elif protocol == "selective_repeat":
         proto = SelectiveRepeatProtocol(client_socket, timeout=SOCKET_TIMEOUT)
-        proto.expected_seq = 2  # For Selective Repeat, keep expecting sequence 2
+        proto.expected_seq = 2 
     else:
         if verbose: print(f"Pootocolo no reconocido: {protocol}. Usando default stop_and_wait")
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT)
