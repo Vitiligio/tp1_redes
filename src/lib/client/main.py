@@ -53,6 +53,8 @@ def send_operation_request(client_socket, addr, operation: str, filename: str, p
             if ack_packet.verify_integrity() and ack_packet.has_flag(RDTFlags.ACK):
                 if ack_packet.header.ack_number == 1:
                     print("Operación ACKeada por servidor")
+                    confirm_ack = create_ack_packet(ack_num=1)
+                    client_socket.sendto(confirm_ack.to_bytes(), addr)
                     client_socket.settimeout(SOCKET_TIMEOUT)
                     return True
                 else:
