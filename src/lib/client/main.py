@@ -40,7 +40,6 @@ def connect_server(addr):
     return connection_made, client_socket
 
 def send_operation_request(client_socket, addr, operation: str, filename: str, protocol: str = "stop_and_wait"):
-    # Change from seq_num=0 to seq_num=1
     operation_packet = create_operation_packet(seq_num=1, operation=operation, filename=filename, protocol=protocol)
     print(f"Enviando operacion: {operation}. Archivo: {filename}. Protocolo: {protocol}")
 
@@ -52,8 +51,9 @@ def send_operation_request(client_socket, addr, operation: str, filename: str, p
             data, server = client_socket.recvfrom(1024)
             ack_packet = RDTPacket.from_bytes(data)
             if ack_packet.verify_integrity() and ack_packet.has_flag(RDTFlags.ACK):
-                if ack_packet.header.ack_number == 1:  # Also expecting ACK for sequence 1
+                if ack_packet.header.ack_number == 1:
                     print("Operación ACKeada por servidor")
+                    client_socket.settimeout(SOCKET_TIMEOUT)
                     return True
                 else:
                     print(f"ACK inesperado: {ack_packet.header.ack_number}")

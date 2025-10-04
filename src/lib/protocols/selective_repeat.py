@@ -18,6 +18,8 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
         self.receive_window = {}
         self.ack_received = {}
         self.duplicate_ack_count = {}
+        # When True, do not call recvfrom in send loop; rely on on_ack invoked externally
+        self.external_ack_handling = False
     
     def send_packet(self, packet: RDTPacket, address: tuple) -> bool:
         if len(self.send_window) >= self.window_size:
@@ -129,18 +131,24 @@ class SelectiveRepeatProtocol(BaseRDTProtocol):
                         packet = create_data_packet(0, chunk) 
                         if not self.send_packet(packet, address):
                             break
-                    
-                    self.socket.settimeout(0.01)
-                    try:
-                        pkt = self.receive_packet()
-                    except socket.timeout:
-                        pkt = None
-                    
-                    self._check_timeouts()
-                    
-                    # Small delay to prevent CPU spinning
-                    if not pkt and len(self.send_window) > 0:
-                        time.sleep(0.001)
+                    # Process ACKs
+                    if self.external_ack_handling:
+                        # ACKs will arrive via on_ack() from the server loop
+                        self._check_timeouts()
+                        if len(self.send_window) > 0:
+                            time.sleep(0.001)
+                    else:
+                        self.socket.settimeout(0.01)
+                        try:
+                            pkt = self.receive_packet()
+                        except socket.timeout:
+                            pkt = None
+                        
+                        self._check_timeouts()
+                        
+                        # Small delay to prevent CPU spinning
+                        if not pkt and len(self.send_window) > 0:
+                            time.sleep(0.001)
                 
                 return True
         except Exception as e:

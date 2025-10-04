@@ -120,7 +120,7 @@ class RDTProtocol:
                 if address in self.client_states:
                     del self.client_states[address]
         elif packet.has_flag(RDTFlags.ACK):
-            self.handle_ack(packet, address, client_state)
+            self.handle_ack(packet, address, client_state, server_socket)
     
     def handle_syn(self, address, server_socket, client_state):
         print(f"SYN received from {address}")
@@ -137,10 +137,10 @@ class RDTProtocol:
         if not client_state['connected']:
             print(f"Error inesperado.")
             return
-        
+
         expected_seq = client_state['expected_seq']
         seq_num = packet.header.sequence_number
-        
+
         if client_state['current_operation'] is None:
             if expected_seq != 1 or seq_num != expected_seq:
                 print(f"Error: esperado seq=1, recibi={seq_num}")
@@ -157,10 +157,17 @@ class RDTProtocol:
                     client_state['proto'] = StopAndWaitProtocol(server_socket, verbose=self.verbose)
                     # For Stop-and-Wait, expect file data to start at sequence 0
                     client_state['expected_seq'] = 0
+                    # If server later acts as sender (DOWNLOAD), allow external ACK handling
+                    client_state['proto'].external_ack_handling = True
+                    # Start sender seq at 0
+                    client_state['proto'].current_seq = 0
                 elif protocol == "selective_repeat":
                     client_state['proto'] = SelectiveRepeatProtocol(server_socket, verbose=self.verbose)
                     # For Selective Repeat, keep expecting sequence 2
                     client_state['expected_seq'] = 2
+                    # Start sender seq at 2 so receiver expects >=2
+                    client_state['proto'].current_seq = 2
+                    client_state['proto'].external_ack_handling = True
                 
                 if self.verbose:
                     print(f"Operación {operation}. Archivo: {filename}. Protocolo: {protocol}")
@@ -238,23 +245,10 @@ class RDTProtocol:
                 
                 ack_packet = create_ack_packet(ack_num=1)
                 server_socket.sendto(ack_packet.to_bytes(), address)
+                print(f"Operación DOWNLOAD. Archivo: {filename}. Protocolo: {client_state['protocol']}")
                 
-                if client_state['proto'] is not None:
-                    print(f"Empezando descarga de {filepath}")
-                    
-                    success = client_state['proto'].send_file(filepath, address)
-                    
-                    if success:
-                        fin_ack = create_end_packet(0, seq_num=3)
-                        server_socket.sendto(fin_ack.to_bytes(), address)
-                        print(f"Descarga terminada. Archivo: {filename}")
-                    else:
-                        print(f"Descarga de {filename} fallida")
-                    
-                    try:
-                        server_socket.settimeout(None)
-                    except Exception:
-                        pass
+                # Mark that we're ready to start sending, but wait for client to be ready
+                client_state['download_ready'] = True
                 return True
                 
         except Exception as e:
@@ -319,8 +313,42 @@ class RDTProtocol:
             except:
                 pass
     
-    def handle_ack(self, packet, address, client_state):
+    def handle_ack(self, packet, address, client_state, server_socket):
         print(f"ACK recibido desde: {address}, seq={packet.header.ack_number}")
+        
+        # Check if this is the client confirming they're ready for DOWNLOAD
+        if (packet.header.ack_number == 1 and 
+            client_state.get('download_ready') and 
+            not client_state.get('download_started')):
+            
+            print(f"Cliente listo para DOWNLOAD. Iniciando envío de {client_state['current_filename']}")
+            client_state['download_started'] = True
+            
+            # Start the download thread now that client is ready
+            def _send_job():
+                try:
+                    proto = client_state['proto']
+                    filepath = os.path.join(self.storage_dir, client_state['current_filename'])
+                    success = proto.send_file(filepath, address)
+                    if success:
+                        fin_ack = create_end_packet(0, seq_num=3)
+                        server_socket.sendto(fin_ack.to_bytes(), address)
+                        print(f"Descarga terminada. Archivo: {client_state['current_filename']}")
+                    else:
+                        print(f"Descarga de {client_state['current_filename']} fallida")
+                except Exception as e:
+                    print(f"Error en envio de descarga: {e}")
+            
+            t = threading.Thread(target=_send_job, daemon=True)
+            t.start()
+            return
+        
+        proto = client_state.get('proto')
+        if proto is not None:
+            try:
+                proto.on_ack(packet)
+            except Exception as e:
+                print(f"Error procesando ACK en protocolo: {e}")
 
 def worker_logic(data, address, server_socket, rdt_protocol):
     try:
