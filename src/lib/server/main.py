@@ -1,17 +1,16 @@
 import multiprocessing
 import multiprocessing.pool
-import random
 import socket
 import os
 import threading
 import tempfile
 import argparse
-import sys
 from lib.helpers.message import *
 from lib.server_config import *
 from contextlib import contextmanager
 from lib.protocols.stop_and_wait import StopAndWaitProtocol
 from lib.protocols.selective_repeat import SelectiveRepeatProtocol
+from lib.server_config import SOCKET_TIMEOUT
 
 class ReaderWriterLock:
     def __init__(self):
@@ -374,7 +373,8 @@ def main():
     pool = multiprocessing.pool.ThreadPool(processes=WORKERS)
     while True:
         try:
-            data, address = server_socket.recvfrom(2048)
+            data, address = server_socket.recvfrom(PACKET_SIZE)
+            server_socket.settimeout(SOCKET_TIMEOUT)
             pool.apply_async(worker_logic, (data, address, server_socket, rdt_protocol))
         except KeyboardInterrupt:
             if not quiet:

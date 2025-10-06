@@ -5,8 +5,9 @@ from mininet.net import Mininet
 from mininet.link import TCLink
 from mininet.node import OVSBridge
 
-CLIENT_SCRIPT = "/home/vboxuser/Desktop/facultad/redes/tp1_redes/src/upload"
-SERVER_SCRIPT = '/home/vboxuser/Desktop/facultad/redes/tp1_redes/src/start-server'
+CLIENT_SCRIPT = "/home/lied/Desktop/redes/tp1/src/upload"
+SERVER_SCRIPT = '/home/lied/Desktop/redes/tp1/src/start-server'
+SRC_PATH = "/home/lied/Desktop/redes/tp1/src"
 
 def setup_concurrency_test():
     
@@ -27,7 +28,7 @@ def setup_concurrency_test():
     server_host.cmd(f'mkdir -p {server_storage}')
 
     env = os.environ.copy()
-    env['PYTHONPATH'] = f"/home/vboxuser/Desktop/facultad/redes/tp1_redes/src:{env.get('PYTHONPATH', '')}"
+    env['PYTHONPATH'] = f"{SRC_PATH}:{env.get('PYTHONPATH', '')}"
     server_proc = server_host.popen(
         [
             'python3', SERVER_SCRIPT,
@@ -37,7 +38,7 @@ def setup_concurrency_test():
             '-v'
         ],
         env=env,
-        cwd='/home/vboxuser/Desktop/facultad/redes/tp1_redes/src',
+        cwd=SRC_PATH,
         stdout=None,
         stderr=None
     )
@@ -45,8 +46,8 @@ def setup_concurrency_test():
     # pongo sleep para esperar a que levante el server
     time.sleep(5)
 
-    test_file1 = "COMPLETAR ARCHIVO1"
-    test_file2 = "COMPLETAR ARCHIVO2"
+    test_file1 = "/home/lied/Downloads/file1.pdf"
+    test_file2 = "/home/lied/Downloads/file2.pdf"
     
     client1.cmd(f'dd if=/dev/urandom of={test_file1} bs=1024 count=50 2>/dev/null')
     client2.cmd(f'dd if=/dev/urandom of={test_file2} bs=1024 count=50 2>/dev/null')
@@ -59,7 +60,7 @@ def setup_concurrency_test():
         '-H', '10.0.0.1',
         '-p', '12000',
         '-s', test_file1,
-        '-n', 'uploaded_1.bin',
+        '-n', 'uploaded_1.pdf',
         '-r', 'stop_and_wait',
         '-v'
     ]
@@ -68,7 +69,7 @@ def setup_concurrency_test():
         '-H', '10.0.0.1',
         '-p', '12000',
         '-s', test_file2,
-        '-n', 'uploaded_2.bin',
+        '-n', 'uploaded_2.pdf',
         '-r', 'selective_repeat',
         '-v'
     ]
@@ -76,7 +77,7 @@ def setup_concurrency_test():
     client1_proc = client1.popen(
         client1_args,
         env=env,
-        cwd='/home/vboxuser/Desktop/facultad/redes/tp1_redes/src',
+        cwd=SRC_PATH,
         stdout=None,
         stderr=None
     )
@@ -84,7 +85,7 @@ def setup_concurrency_test():
     client2_proc = client2.popen(
         client2_args,
         env=env,
-        cwd='/home/vboxuser/Desktop/facultad/redes/tp1_redes/src',
+        cwd=SRC_PATH,
         stdout=None,
         stderr=None
     )

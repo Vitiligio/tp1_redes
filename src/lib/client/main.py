@@ -23,7 +23,7 @@ def connect_server(addr):
     for attempt in range(1, max_attempts + 1):
         try:
             client_socket.sendto(sync_message.to_bytes(), addr)
-            data, server = client_socket.recvfrom(1024)
+            data, server = client_socket.recvfrom(PACKET_SIZE)
             response_packet = RDTPacket.from_bytes(data)
             if response_packet.has_flag(RDTFlags.SYN) and response_packet.has_flag(RDTFlags.ACK):
                 print("Conexión establecida")
@@ -39,33 +39,33 @@ def connect_server(addr):
 
     return connection_made, client_socket
 
-def send_operation_request(client_socket, addr, operation: str, filename: str, protocol: str = "stop_and_wait"):
+def send_operation_request(client_socket, addr, operation: str, filename: str, protocol: str = "stop_and_wait", verbose: bool=False):
     operation_packet = create_operation_packet(seq_num=1, operation=operation, filename=filename, protocol=protocol)
-    print(f"Enviando operacion: {operation}. Archivo: {filename}. Protocolo: {protocol}")
+    if verbose: print(f"Enviando operacion: {operation}. Archivo: {filename}. Protocolo: {protocol}")
 
     max_attempts = 10
 
     for attempt in range(1, max_attempts + 1):
         try:
             client_socket.sendto(operation_packet.to_bytes(), addr)
-            data, server = client_socket.recvfrom(1024)
+            data, server = client_socket.recvfrom(PACKET_SIZE)
             ack_packet = RDTPacket.from_bytes(data)
             if ack_packet.verify_integrity() and ack_packet.has_flag(RDTFlags.ACK):
                 if ack_packet.header.ack_number == 1:
-                    print("Operación ACKeada por servidor")
+                    if verbose: print("Operación ACKeada por servidor")
                     confirm_ack = create_ack_packet(ack_num=1)
                     client_socket.sendto(confirm_ack.to_bytes(), addr)
                     client_socket.settimeout(SOCKET_TIMEOUT)
                     return True
                 else:
-                    print(f"ACK inesperado: {ack_packet.header.ack_number}")
+                    if verbose: print(f"ACK inesperado: {ack_packet.header.ack_number}")
             else:
-                print("ACK invalido")
+                if verbose: print("ACK invalido")
         except socket.timeout:
             if attempt < max_attempts:
-                print(f"Timeout - intento {attempt}/{max_attempts})")
+                if verbose: print(f"Timeout - intento {attempt}/{max_attempts})")
             else:
-                print('Timeout')
+                if verbose: print('Timeout')
     return False
 
 def upload_file(client_socket, addr, filename: str, protocol: str, verbose: bool = False):
@@ -80,7 +80,37 @@ def upload_file(client_socket, addr, filename: str, protocol: str, verbose: bool
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT, verbose=verbose)
         proto.current_seq = 0
     
-    return proto.send_file(filename, addr)
+    import threading
+
+    # enable external ack handling
+    proto.external_ack_handling = True
+    stop_ack_thread = threading.Event()
+
+    def ack_listener():
+        client_socket.settimeout(0.5)
+        while not stop_ack_thread.is_set():
+            try:
+                data, _ = client_socket.recvfrom(2048)
+                pkt = RDTPacket.from_bytes(data)
+                if pkt and pkt.has_flag(RDTFlags.ACK):
+                    proto.on_ack(pkt)
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+
+    t = threading.Thread(target=ack_listener, daemon=True)
+    t.start()
+
+    # now send
+    success = proto.send_file(filename, addr)
+
+    # stop listener
+    stop_ack_thread.set()
+    t.join(timeout=1)
+
+
+    return success
 
 def download_file(client_socket, addr, filename: str, protocol: str, verbose: bool = False):
     if protocol == "stop_and_wait":
@@ -94,7 +124,7 @@ def download_file(client_socket, addr, filename: str, protocol: str, verbose: bo
         proto = StopAndWaitProtocol(client_socket, timeout=SOCKET_TIMEOUT)
         proto.expected_seq = 0
     
-    print(f"Descargando: {filename} usando protocolo {protocol}")
+    if verbose: print(f"Descargando: {filename} usando protocolo {protocol}")
     
     try:
         temp_file = tempfile.NamedTemporaryFile(prefix=f".{filename}.download.", 
@@ -103,7 +133,7 @@ def download_file(client_socket, addr, filename: str, protocol: str, verbose: bo
         temp_file_path = temp_file.name
         if verbose: print(f"Archivo tepmoral creado: {temp_file_path}")
     except Exception as e:
-        print(f"Error creando archivo temporal: {e}")
+        if verbose: print(f"Error creando archivo temporal: {e}")
         return False
     
     download_success = False
@@ -208,7 +238,7 @@ def wait_for_fin_ack(client_socket, addr, timeout=3):
     for attempt in range(1, max_attempts + 1):
         try:
             client_socket.settimeout(timeout)
-            data, server = client_socket.recvfrom(1024)
+            data, server = client_socket.recvfrom(PACKET_SIZE)
             fin_ack_packet = RDTPacket.from_bytes(data)
             if (fin_ack_packet.has_flag(RDTFlags.FIN) and fin_ack_packet.has_flag(RDTFlags.ACK)):
                 return True
@@ -311,7 +341,7 @@ def upload_main():
     connection_made, client_socket = connect_server(addr)
     
     if connection_made:
-        if send_operation_request(client_socket, addr, "UPLOAD", filename, protocol):
+        if send_operation_request(client_socket, addr, "UPLOAD", filename, protocol, verbose):
             success = upload_file(client_socket, addr, args.src, protocol, verbose)
             if success:
                 if not quiet:
@@ -335,9 +365,9 @@ def upload_main():
             else:
                 if verbose:
                     if attempt < max_fin_attempts:
-                        print(f"Timeout esperando FIN-ACK - intento {attempt}/{max_fin_attempts})")
+                        if verbose: print(f"Timeout esperando FIN-ACK - intento {attempt}/{max_fin_attempts})")
                     else:
-                        print("Servidor no respondio a FIN.")
+                        if verbose: print("Servidor no respondio a FIN.")
     
     client_socket.close()
 
@@ -371,7 +401,7 @@ def download_main():
     connection_made, client_socket = connect_server(addr)
     
     if connection_made:
-        if send_operation_request(client_socket, addr, "DOWNLOAD", filename, protocol):
+        if send_operation_request(client_socket, addr, "DOWNLOAD", filename, protocol, verbose):
             success = download_file(client_socket, addr, filename, protocol, verbose)
             if not success and not quiet:
                 print("Descarga fallida")

@@ -6,7 +6,7 @@ from .base_protocol import BaseRDTProtocol
 
 class StopAndWaitProtocol(BaseRDTProtocol):
     
-    def __init__(self, socket: socket.socket, timeout: int = 5, max_retries: int = 3, verbose: bool = False):
+    def __init__(self, socket: socket.socket, timeout: int = 0.3, max_retries: int = 60, verbose: bool = False):
         super().__init__(socket, timeout)
         self.max_retries = max_retries
         self.verbose = verbose
@@ -40,7 +40,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                 return None
             
             if packet.has_flag(RDTFlags.ACK):
-                print(f"DEBUG CLIENT: Received ACK={packet.header.ack_number}, current_seq={self.current_seq}")
+                if self.verbose: print(f"DEBUG CLIENT: Received ACK={packet.header.ack_number}, current_seq={self.current_seq}")
                 return packet
             elif packet.has_flag(RDTFlags.DATA):
                 print(f"DEBUG CLIENT: Received seq={packet.header.sequence_number}, current_seq={self.current_seq}, will become {(self.current_seq + 1) % 2}")
@@ -55,7 +55,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                     if self.verbose: print(f"DATA fuera de secuencia. Esperado: {self.expected_seq}, Recibido: {packet.header.sequence_number}")
                 return packet
             else:
-                print(f"DEBUG CLIENT: QUE ONDA NO TENGO NINGUN FLAG")
+                if self.verbose: print(f"DEBUG CLIENT: QUE ONDA NO TENGO NINGUN FLAG")
 
                 return packet
                 
@@ -95,7 +95,7 @@ class StopAndWaitProtocol(BaseRDTProtocol):
                     chunk = file.read(1024)
                     if not chunk:
                         break
-                    print(f"DEBUG CLIENT: Sending chunk with seq={self.current_seq}, file_pos={file.tell()}")
+                    if self.verbose: print(f"DEBUG CLIENT: Sending chunk with seq={self.current_seq}, file_pos={file.tell()}")
                     packet = create_data_packet(self.current_seq, chunk)
                     
                     while True:

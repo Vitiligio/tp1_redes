@@ -5,7 +5,7 @@ from .base_protocol import BaseRDTProtocol
 
 class SelectiveRepeatProtocol(BaseRDTProtocol):
     
-    def __init__(self, socket: socket.socket, timeout: int = 5, max_retries: int = 3, 
+    def __init__(self, socket: socket.socket, timeout: int = 5, max_retries: int = 60, 
                  window_size: int = 8, verbose: bool = False):
         super().__init__(socket, timeout)
 
