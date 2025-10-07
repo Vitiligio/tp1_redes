@@ -69,6 +69,26 @@ python3 download -H 127.0.0.1 -p 8080 -d ./downloads/ -n doc.pdf -r selective_re
 ```
 
 
+## Configuraciones
+
+### Configuración del cliente (`client_config.py`)
+```python
+SERVER_IP = "127.0.0.1"   
+SERVER_PORT = 12000       
+SOCKET_TIMEOUT = 0.08     
+PACKET_SIZE = 1400
+```
+
+### Configuración del servidor (`server_config.py`)
+```python
+SERVER_IP = "127.0.0.1"
+SERVER_PORT = 12000
+WORKERS = 3
+SOCKET_TIMEOUT = 0.08
+STORAGE_DIR = "server_files"
+PACKET_SIZE = 1400
+```
+
 ## Estructura de Paquetes
 
 ### Header del Paquete RDT
