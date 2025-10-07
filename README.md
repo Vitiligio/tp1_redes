@@ -15,13 +15,13 @@ python3 start-server [-h] [-v | -q] [-H ADDR] [-p PORT] [-s DIRPATH]
 - `-h, --help`: Mostrar mensaje de ayuda
 - `-v, --verbose`: Aumentar verbosidad de salida
 - `-q, --quiet`: Disminuir verbosidad de salida
-- `-H, --host`: Dirección IP del servidor (default: localhost)
-- `-p, --port`: Puerto del servidor (default: 8080)
+- `-H, --host`: Dirección IP del servidor (default: 127.0.0.1)
+- `-p, --port`: Puerto del servidor (default: 12000)
 - `-s, --storage`: Directorio de almacenamiento (default: server_files)
 
 **Ejemplo:**
 ```bash
-python3 start-server -H 127.0.0.1 -p 8080 -s ./server_files -v
+python3 start-server -H 127.0.0.1 -p 12000 -s ./server_files -v
 ```
 
 ### 2. Upload
@@ -41,9 +41,9 @@ python3 upload [-h] [-v | -q] [-H ADDR] [-p PORT] [-s FILEPATH] [-n FILENAME] [-
 
 **Ejemplo:**
 ```bash
-python3 upload -H 127.0.0.1 -p 8080 -s ./video.mp4 -n video.mp4 -r stop_and_wait -v
+python3 upload -H 127.0.0.1 -p 12000 -s ./video.mp4 -n video.mp4 -r stop_and_wait -v
 
-python3 upload -H 127.0.0.1 -p 8080 -s ./documento.pdf -n doc.pdf -r selective_repeat
+python3 upload -H 127.0.0.1 -p 12000 -s ./documento.pdf -n doc.pdf -r selective_repeat
 ```
 
 ### 3. Descarga
@@ -63,9 +63,9 @@ python3 download [-h] [-v | -q] [-H ADDR] [-p PORT] [-d FILEPATH] [-n FILENAME] 
 
 **Ejemplos:**
 ```bash
-python3 download -H 127.0.0.1 -p 8080 -n video.mp4 -r stop_and_wait -v
+python3 download -H 127.0.0.1 -p 12000 -n video.mp4 -r stop_and_wait -v
 
-python3 download -H 127.0.0.1 -p 8080 -d ./downloads/ -n doc.pdf -r selective_repeat
+python3 download -H 127.0.0.1 -p 12000 -d ./downloads/ -n doc.pdf -r selective_repeat
 ```
 
 
