@@ -92,14 +92,13 @@ PACKET_SIZE = 1400
 ## Estructura de Paquetes
 
 ### Header del Paquete RDT
-El protocolo utiliza un header fijo de **16 bytes** con la siguiente estructura:
+El protocolo utiliza un header fijo de **12 bytes** con la siguiente estructura:
 
 | Campo | Bytes | Descripción |
 |-------|-------|-------------|
 | `sequence_number` | 4 | Número de secuencia del paquete |
 | `ack_number` | 4 | Número de ACK |
 | `flags` | 2 | Flags del protocolo |
-| `checksum` | 4 | Verificación de integridad |
 | `payload_length` | 2 | Longitud del payload en bytes |
 
 ### Flags Disponibles
@@ -110,7 +109,7 @@ El protocolo utiliza un header fijo de **16 bytes** con la siguiente estructura:
 - `ERR (0x10)`: Mensaje de error
 
 ### Tamaños de Paquete
-- **Tamaño del header**: 16 bytes
+- **Tamaño del header**: 12 bytes
 - **Tamaño del payload**: Hasta 1024 bytes
-- **Tamaño del paquete**: Hasta 1040 bytes (16 + 1024).
+- **Tamaño del paquete**: Hasta 1036 bytes (12 + 1024).
 

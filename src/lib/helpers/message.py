@@ -72,8 +72,8 @@ class RDTPacket:
             self.header.sequence_number.to_bytes(4, 'big') +
             self.header.ack_number.to_bytes(4, 'big') +
             self.header.flags.to_bytes(2, 'big') +
-            checksum.to_bytes(4, 'big') + 
             len(self.payload).to_bytes(2, 'big') +
+            checksum.to_bytes(4, 'big') + 
             self.payload
         )
         return packet_data
@@ -88,8 +88,8 @@ class RDTPacket:
             seq_num = int.from_bytes(data[0:4], 'big')
             ack_num = int.from_bytes(data[4:8], 'big')
             flags = int.from_bytes(data[8:10], 'big')
-            received_checksum = int.from_bytes(data[10:14], 'big')
-            payload_len = int.from_bytes(data[14:16], 'big')
+            payload_len = int.from_bytes(data[10:12], 'big')
+            received_checksum = int.from_bytes(data[12:16], 'big')
             
             if len(data) < 16 + payload_len:
                 return None
